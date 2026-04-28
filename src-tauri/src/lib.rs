@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use tauri::{Emitter, Window};
+use tauri::{Emitter, Manager, Window};
 use futures_util::StreamExt;
 use std::path::PathBuf;
 
@@ -317,6 +317,133 @@ async fn generate_response(
 }
 
 // ─────────────────────────────────────────────
+// CHAT HISTORY PERSISTENCE
+// ─────────────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ChatSession {
+    pub id: String,
+    pub title: String,
+    pub created_at: u64,
+    pub messages: Vec<ChatMessage>,
+}
+
+fn history_file(app: &tauri::AppHandle) -> PathBuf {
+    let base = app.path().app_data_dir()
+        .unwrap_or_else(|_| PathBuf::from("."));
+    std::fs::create_dir_all(&base).ok();
+    base.join("chat_history.json")
+}
+
+#[tauri::command]
+fn save_chat_history(app: tauri::AppHandle, sessions: Vec<ChatSession>) -> Result<(), String> {
+    let path = history_file(&app);
+    let json = serde_json::to_string_pretty(&sessions).map_err(|e| e.to_string())?;
+    std::fs::write(path, json).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn load_chat_history(app: tauri::AppHandle) -> Result<Vec<ChatSession>, String> {
+    let path = history_file(&app);
+    if !path.exists() { return Ok(vec![]); }
+    let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&raw).map_err(|e| e.to_string())
+}
+
+// ─────────────────────────────────────────────
+// RECENT FILES PERSISTENCE
+// ─────────────────────────────────────────────
+
+fn recent_files_path(app: &tauri::AppHandle) -> PathBuf {
+    let base = app.path().app_data_dir()
+        .unwrap_or_else(|_| PathBuf::from("."));
+    std::fs::create_dir_all(&base).ok();
+    base.join("recent_files.json")
+}
+
+#[tauri::command]
+fn save_recent_files(app: tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
+    let path = recent_files_path(&app);
+    let json = serde_json::to_string_pretty(&paths).map_err(|e| e.to_string())?;
+    std::fs::write(path, json).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn load_recent_files(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    let path = recent_files_path(&app);
+    if !path.exists() { return Ok(vec![]); }
+    let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&raw).map_err(|e| e.to_string())
+}
+
+// ─────────────────────────────────────────────
+// TERMINAL COMMAND RUNNER
+// ─────────────────────────────────────────────
+
+#[tauri::command]
+async fn run_terminal_command(
+    window: Window,
+    stream_id: String,
+    command: String,
+    cwd: String,
+) -> Result<(), String> {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::process::Command;
+
+    let out_event = format!("terminal-out-{}", stream_id);
+    let done_event = format!("terminal-done-{}", stream_id);
+
+    // Use PowerShell on Windows, sh on Unix
+    #[cfg(target_os = "windows")]
+    let mut child = Command::new("powershell")
+        .args(["-NoProfile", "-Command", &command])
+        .current_dir(&cwd)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    #[cfg(not(target_os = "windows"))]
+    let mut child = Command::new("sh")
+        .args(["-c", &command])
+        .current_dir(&cwd)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    // Stream stdout
+    if let Some(stdout) = child.stdout.take() {
+        let mut lines = BufReader::new(stdout).lines();
+        let window_clone = window.clone();
+        let out_event_clone = out_event.clone();
+        tokio::spawn(async move {
+            while let Ok(Some(line)) = lines.next_line().await {
+                let _ = window_clone.emit(&out_event_clone, line);
+            }
+        });
+    }
+
+    // Stream stderr
+    if let Some(stderr) = child.stderr.take() {
+        let mut lines = BufReader::new(stderr).lines();
+        let window_clone = window.clone();
+        let out_event_clone = out_event.clone();
+        tokio::spawn(async move {
+            while let Ok(Some(line)) = lines.next_line().await {
+                let _ = window_clone.emit(&out_event_clone, format!("\x1b[31m{}\x1b[0m", line));
+            }
+        });
+    }
+
+    let status = child.wait().await.map_err(|e| e.to_string())?;
+    let exit_code = status.code().unwrap_or(-1);
+    let _ = window.emit(&done_event, exit_code);
+
+    Ok(())
+}
+
+// ─────────────────────────────────────────────
 // APP ENTRY
 // ─────────────────────────────────────────────
 
@@ -332,6 +459,11 @@ pub fn run() {
             read_directory,
             read_file,
             write_file,
+            save_chat_history,
+            load_chat_history,
+            save_recent_files,
+            load_recent_files,
+            run_terminal_command,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
