@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { invoke } from '@tauri-apps/api/core';
-import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import TopMenuBar from './TopMenuBar';
 import ModelSelector from './ModelSelector';
@@ -146,28 +146,6 @@ const EditorView: React.FC<EditorViewProps> = ({ fontSize, theme }) => {
 
   // ── Streaming listeners ───────────────────────────────────────────────────
 
-  useEffect(() => {
-    let unlistenStream: UnlistenFn;
-    let unlistenDone: UnlistenFn;
-
-    const setupListeners = async () => {
-      unlistenStream = await listen<string>('chat-stream', (event) => {
-        setMessages(prev => {
-          const next = [...prev];
-          const last = next[next.length - 1];
-          if (last && last.role === 'ai') last.content += event.payload;
-          return next;
-        });
-      });
-      unlistenDone = await listen('chat-stream-done', () => setIsGenerating(false));
-    };
-
-    setupListeners();
-    return () => {
-      if (unlistenStream) unlistenStream();
-      if (unlistenDone) unlistenDone();
-    };
-  }, []);
 
   // ── Keyboard: Ctrl+S to save ──────────────────────────────────────────────
 
@@ -283,8 +261,26 @@ const EditorView: React.FC<EditorViewProps> = ({ fontSize, theme }) => {
       { role: 'ai', content: '' }
     ]);
 
+    const streamId = Date.now().toString();
+
+    // Per-request unique listeners — no cross-component pollution
+    const unlistenStream = await listen<string>(`chat-stream-${streamId}`, (event) => {
+      setMessages(prev => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last && last.role === 'ai') last.content += event.payload;
+        return next;
+      });
+    });
+    const unlistenDone = await listen(`chat-stream-done-${streamId}`, () => {
+      setIsGenerating(false);
+      unlistenStream();
+      unlistenDone();
+    });
+
     try {
       await invoke('generate_response', {
+        streamId,
         model: currentModel,
         messages: apiMessages,
       });

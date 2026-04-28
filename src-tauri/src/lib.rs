@@ -275,6 +275,7 @@ fn write_file(path: String, content: String) -> Result<(), String> {
 #[tauri::command]
 async fn generate_response(
     window: Window,
+    stream_id: String,
     model: String,
     messages: Vec<ChatMessage>,
 ) -> Result<(), String> {
@@ -293,6 +294,8 @@ async fn generate_response(
         .map_err(|e| e.to_string())?;
 
     let mut stream = res.bytes_stream();
+    let stream_event = format!("chat-stream-{}", stream_id);
+    let done_event = format!("chat-stream-done-{}", stream_id);
 
     while let Some(item) = stream.next().await {
         let chunk = item.map_err(|e| e.to_string())?;
@@ -301,10 +304,10 @@ async fn generate_response(
             if line.is_empty() { continue; }
             if let Ok(parsed) = serde_json::from_str::<OllamaResponseChunk>(line) {
                 if let Some(msg) = parsed.message {
-                    let _ = window.emit("chat-stream", msg.content);
+                    let _ = window.emit(&stream_event, msg.content);
                 }
                 if parsed.done {
-                    let _ = window.emit("chat-stream-done", ());
+                    let _ = window.emit(&done_event, ());
                 }
             }
         }

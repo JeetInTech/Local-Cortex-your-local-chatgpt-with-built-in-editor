@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { invoke } from '@tauri-apps/api/core';
-import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import { listen } from '@tauri-apps/api/event';
 import ModelSelector from './ModelSelector';
 
 interface Message {
@@ -40,34 +40,6 @@ const GptView: React.FC<GptViewProps> = ({ fontSize }) => {
 
   const [isGenerating, setIsGenerating] = useState(false);
 
-  useEffect(() => {
-    let unlistenStream: UnlistenFn;
-    let unlistenDone: UnlistenFn;
-
-    const setupListeners = async () => {
-      unlistenStream = await listen<string>('chat-stream', (event) => {
-        setMessages(prev => {
-          const newMessages = [...prev];
-          const lastMsg = newMessages[newMessages.length - 1];
-          if (lastMsg && lastMsg.role === 'ai') {
-            lastMsg.content += event.payload;
-          }
-          return newMessages;
-        });
-      });
-
-      unlistenDone = await listen('chat-stream-done', () => {
-        setIsGenerating(false);
-      });
-    };
-
-    setupListeners();
-
-    return () => {
-      if (unlistenStream) unlistenStream();
-      if (unlistenDone) unlistenDone();
-    };
-  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -82,11 +54,28 @@ const GptView: React.FC<GptViewProps> = ({ fontSize }) => {
       { id: (Date.now() + 1).toString(), role: 'ai', content: '' }
     ]);
     setInput('');
+    const streamId = Date.now().toString();
     setIsGenerating(true);
+
+    // Set up per-request unique listeners
+    const unlistenStream = await listen<string>(`chat-stream-${streamId}`, (event) => {
+      setMessages(prev => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last && last.role === 'ai') last.content += event.payload;
+        return next;
+      });
+    });
+    const unlistenDone = await listen(`chat-stream-done-${streamId}`, () => {
+      setIsGenerating(false);
+      unlistenStream();
+      unlistenDone();
+    });
 
     try {
       await invoke('generate_response', {
-        model: currentModel.toLowerCase(),
+        streamId,
+        model: currentModel,
         messages: apiMessages
       });
     } catch (error) {
