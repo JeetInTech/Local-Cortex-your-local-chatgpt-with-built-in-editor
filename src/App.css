@@ -1,0 +1,651 @@
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.spin { animation: spin 1s linear infinite; }
+
+:root {
+  /* VS Code Dark Theme Colors (Default) */
+  --vscode-bg: #1e1e1e;
+  --vscode-sidebar: #252526;
+  --vscode-activity-bar: #333333;
+  --vscode-border: #454545;
+  --vscode-text: #cccccc;
+  --vscode-text-active: #ffffff;
+  --vscode-accent: #007acc;
+  --vscode-input: #3c3c3c;
+  --vscode-menu-bg: #3c3c3c;
+
+  /* ChatGPT Dark Theme Colors (Default) */
+  --gpt-bg: #212121;
+  --gpt-sidebar: #171717;
+  --gpt-border: #4d4d4f;
+  --gpt-text: #ececec;
+  --gpt-text-muted: #b4b4b4;
+  --gpt-input-bg: #2f2f2f;
+  
+  /* Shared Defaults */
+  --modal-bg: #252526;
+  --modal-border: #454545;
+  --btn-bg: #007acc;
+  --btn-text: #ffffff;
+
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+}
+
+[data-theme="light"] {
+  /* VS Code Light Theme Colors */
+  --vscode-bg: #ffffff;
+  --vscode-sidebar: #f3f3f3;
+  --vscode-activity-bar: #2c2c2c; /* Activity bar often stays dark or becomes very light, let's keep it standard VS light */
+  --vscode-border: #e5e5e5;
+  --vscode-text: #333333;
+  --vscode-text-active: #000000;
+  --vscode-accent: #007acc;
+  --vscode-input: #ffffff;
+  --vscode-menu-bg: #dddddd;
+
+  /* ChatGPT Light Theme Colors */
+  --gpt-bg: #ffffff;
+  --gpt-sidebar: #f9f9f9;
+  --gpt-border: #e5e5e5;
+  --gpt-text: #0d0d0d;
+  --gpt-text-muted: #8e8e8e;
+  --gpt-input-bg: #ffffff;
+
+  --modal-bg: #ffffff;
+  --modal-border: #cccccc;
+}
+
+[data-theme="light"] .activity-bar {
+  background-color: #2c2c2c; /* keeping activity bar dark looks good, or we can make it light. Let's use light #f3f3f3 for full light mode */
+  background-color: #e8e8e8;
+  border-right: 1px solid var(--vscode-border);
+}
+
+[data-theme="light"] .activity-item { color: #666666; }
+[data-theme="light"] .activity-item:hover, [data-theme="light"] .activity-item.active { color: #000000; }
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  height: 100vh;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  background-color: var(--vscode-bg); 
+  color: var(--vscode-text);
+  transition: background-color 0.3s, color 0.3s;
+}
+
+#root {
+  height: 100vh;
+  display: flex;
+}
+
+.app-container {
+  display: flex;
+  width: 100vw;
+  height: 100vh;
+}
+
+/* --- Global Activity Bar --- */
+.activity-bar {
+  width: 48px;
+  background-color: var(--vscode-activity-bar);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 10px;
+  flex-shrink: 0;
+  z-index: 10;
+  transition: background-color 0.3s;
+}
+
+.activity-item {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  color: #858585;
+  cursor: pointer;
+  position: relative;
+  transition: color 0.2s;
+}
+
+.activity-item:hover, .activity-item.active {
+  color: var(--vscode-text-active);
+}
+
+.activity-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background-color: var(--vscode-accent);
+}
+
+/* --- Main View Container --- */
+.main-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* --- Modals & Popovers --- */
+.modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.modal-content {
+  background-color: var(--modal-bg);
+  border: 1px solid var(--modal-border);
+  border-radius: 8px;
+  width: 400px;
+  padding: 24px;
+  color: var(--vscode-text);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+}
+.modal-header {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.setting-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.theme-toggle, .btn-small {
+  background-color: var(--vscode-input);
+  color: var(--vscode-text);
+  border: 1px solid var(--vscode-border);
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.theme-toggle:hover, .btn-small:hover {
+  border-color: var(--vscode-accent);
+}
+
+.popover-container {
+  position: absolute;
+  background-color: var(--modal-bg);
+  border: 1px solid var(--modal-border);
+  border-radius: 6px;
+  padding: 8px 0;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  z-index: 50;
+  min-width: 150px;
+}
+.popover-item {
+  padding: 8px 16px;
+  cursor: pointer;
+  color: var(--vscode-text);
+  font-size: 13px;
+}
+.popover-item:hover {
+  background-color: var(--vscode-accent);
+  color: #fff;
+}
+
+/* --- Top Menu Bar --- */
+.top-menu-bar {
+  height: 30px;
+  background-color: var(--vscode-bg);
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--vscode-border);
+  font-size: 13px;
+  user-select: none;
+}
+.menu-item {
+  padding: 4px 8px;
+  cursor: pointer;
+  color: var(--vscode-text);
+  border-radius: 4px;
+  position: relative;
+}
+.menu-item:hover {
+  background-color: rgba(255,255,255,0.1);
+}
+[data-theme="light"] .menu-item:hover {
+  background-color: rgba(0,0,0,0.05);
+}
+
+/* =========================================
+   GPT MODE STYLES
+   ========================================= */
+.gpt-mode {
+  background-color: var(--gpt-bg);
+  color: var(--gpt-text);
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+
+.gpt-sidebar {
+  width: 260px;
+  background-color: var(--gpt-sidebar);
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--gpt-border);
+}
+
+.gpt-search {
+  margin-top: 12px;
+  background-color: var(--gpt-bg);
+  border: 1px solid var(--gpt-border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.gpt-search input {
+  background: transparent;
+  border: none;
+  color: var(--gpt-text);
+  outline: none;
+  width: 100%;
+  font-size: 13px;
+}
+
+.gpt-new-chat-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--gpt-text);
+  background-color: transparent;
+  border: 1px solid transparent;
+  transition: background-color 0.2s;
+  font-size: 14px;
+}
+
+.gpt-new-chat-btn:hover {
+  background-color: rgba(255,255,255,0.05);
+}
+[data-theme="light"] .gpt-new-chat-btn:hover {
+  background-color: rgba(0,0,0,0.05);
+}
+
+.gpt-history-list {
+  flex: 1;
+  overflow-y: auto;
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.gpt-history-item {
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--gpt-text);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gpt-history-item:hover {
+  background-color: rgba(255,255,255,0.05);
+}
+[data-theme="light"] .gpt-history-item:hover {
+  background-color: rgba(0,0,0,0.05);
+}
+
+.gpt-main-chat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  background-color: var(--gpt-bg);
+}
+
+.chat-header-bar {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--gpt-border);
+  font-weight: 600;
+  justify-content: space-between;
+}
+.model-selector-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: var(--gpt-text-muted);
+}
+.model-selector-btn:hover {
+  background-color: rgba(255,255,255,0.05);
+  color: var(--gpt-text);
+}
+[data-theme="light"] .model-selector-btn:hover {
+  background-color: rgba(0,0,0,0.05);
+}
+
+.gpt-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.gpt-message {
+  width: 100%;
+  max-width: 800px;
+  padding: 24px 0;
+  display: flex;
+  gap: 20px;
+  font-size: 16px; /* Dynamic via React inline style later if needed */
+  line-height: 1.6;
+}
+
+.gpt-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.gpt-avatar.user { background-color: #333; color: white;}
+.gpt-avatar.ai { background-color: #10a37f; color: white; }
+
+.gpt-message-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.gpt-message-content pre {
+  background-color: #0d0d0d !important;
+  border-radius: 8px;
+  padding: 16px;
+  margin: 16px 0;
+  overflow-x: auto;
+}
+[data-theme="light"] .gpt-message-content pre {
+  background-color: #f6f8fa !important;
+  border: 1px solid #d0d7de;
+}
+
+.gpt-input-container {
+  width: 100%;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.gpt-input-wrapper {
+  background-color: var(--gpt-input-bg);
+  border: 1px solid var(--gpt-border);
+  border-radius: 12px;
+  padding: 12px 16px;
+  display: flex;
+  align-items: flex-end;
+  box-shadow: 0 0 15px rgba(0,0,0,0.05);
+}
+
+.gpt-input-wrapper:focus-within {
+  border-color: var(--vscode-accent);
+}
+
+.gpt-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--gpt-text);
+  font-family: inherit;
+  font-size: 16px;
+  resize: none;
+  max-height: 200px;
+  outline: none;
+  padding: 4px 0;
+}
+
+.gpt-input::placeholder { color: var(--gpt-text-muted); }
+
+.gpt-send-btn {
+  background-color: var(--vscode-text-active);
+  color: var(--vscode-bg);
+  border: none;
+  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  margin-left: 8px;
+}
+.gpt-send-btn:disabled {
+  background-color: var(--gpt-border);
+  color: var(--gpt-bg);
+  cursor: not-allowed;
+}
+
+/* =========================================
+   EDITOR MODE STYLES
+   ========================================= */
+.editor-mode {
+  background-color: var(--vscode-bg);
+  color: var(--vscode-text);
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+
+.editor-sidebar {
+  width: 250px;
+  background-color: var(--vscode-sidebar);
+  border-right: 1px solid var(--vscode-border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.editor-sidebar-header {
+  padding: 10px 20px;
+  font-size: 11px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--vscode-text);
+  opacity: 0.7;
+}
+
+.editor-search {
+  padding: 0 16px 12px 16px;
+}
+.editor-search input {
+  width: 100%;
+  background-color: var(--vscode-input);
+  border: 1px solid var(--vscode-border);
+  color: var(--vscode-text);
+  padding: 4px 8px;
+  font-size: 12px;
+  outline: none;
+}
+.editor-search input:focus {
+  border-color: var(--vscode-accent);
+}
+
+.file-tree {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 20px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--vscode-text);
+}
+
+.file-item:hover {
+  background-color: rgba(255,255,255,0.05);
+}
+[data-theme="light"] .file-item:hover {
+  background-color: rgba(0,0,0,0.05);
+}
+.file-item.active {
+  background-color: rgba(0, 122, 204, 0.2);
+  color: var(--vscode-text-active);
+}
+
+.editor-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.editor-tabs {
+  display: flex;
+  background-color: var(--vscode-sidebar);
+  height: 35px;
+  overflow-x: auto;
+}
+
+.editor-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 16px;
+  background-color: var(--vscode-sidebar);
+  color: var(--vscode-text);
+  opacity: 0.7;
+  font-size: 13px;
+  cursor: pointer;
+  border-right: 1px solid var(--vscode-border);
+  border-top: 1px solid transparent;
+}
+.editor-tab.active {
+  background-color: var(--vscode-bg);
+  color: var(--vscode-text-active);
+  opacity: 1;
+  border-top-color: var(--vscode-accent);
+}
+
+.editor-container {
+  flex: 1;
+  position: relative;
+}
+
+.editor-chat-panel {
+  width: 300px;
+  background-color: var(--vscode-sidebar);
+  border-left: 1px solid var(--vscode-border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.chat-panel-header {
+  padding: 10px 16px;
+  font-size: 11px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--vscode-text);
+  border-bottom: 1px solid var(--vscode-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.chat-panel-header > span {
+  opacity: 0.7;
+}
+
+.panel-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.panel-message {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--vscode-text);
+}
+.panel-message.user { color: var(--vscode-text-active); }
+.panel-message.ai { color: var(--vscode-text); }
+
+.panel-message pre {
+  background-color: var(--vscode-bg) !important;
+  border: 1px solid var(--vscode-border);
+  border-radius: 4px;
+  padding: 8px;
+  margin: 8px 0;
+  overflow-x: auto;
+}
+
+.panel-input-container {
+  padding: 16px;
+  border-top: 1px solid var(--vscode-border);
+}
+
+.panel-input-wrapper {
+  background-color: var(--vscode-input);
+  border: 1px solid var(--vscode-border);
+  border-radius: 4px;
+  display: flex;
+  padding: 4px 8px;
+}
+
+.panel-input-wrapper:focus-within {
+  border-color: var(--vscode-accent);
+}
+
+.panel-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--vscode-text-active);
+  font-family: inherit;
+  font-size: 13px;
+  resize: none;
+  outline: none;
+}
