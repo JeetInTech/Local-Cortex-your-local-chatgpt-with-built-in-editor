@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { MessageSquare, Code2, Settings } from "lucide-react";
 import "./App.css";
 import GptView from "./components/GptView";
@@ -13,6 +13,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   lineNumbers: true,
   minimap: true,
   terminalFontSize: 13,
+  enabledExtensions: [],
 };
 
 function loadSettings(): AppSettings {
@@ -23,12 +24,31 @@ function loadSettings(): AppSettings {
   return DEFAULT_SETTINGS;
 }
 
+export interface EditorFile {
+  name: string;
+  content: string;
+  language: string;
+}
+
 function App() {
   const [currentView, setCurrentView] = useState<'gpt' | 'editor'>('editor');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
 
-  // Persist settings to localStorage on change
+  // ── GPT → Editor bridge ──────────────────────────────────────────────────
+  // GptView calls sendToEditor(file) → App queues it → EditorView consumes it
+  const [pendingEditorFile, setPendingEditorFile] = useState<EditorFile | null>(null);
+
+  const sendToEditor = useCallback((file: EditorFile) => {
+    setPendingEditorFile(file);
+    setCurrentView('editor'); // switch to editor view
+  }, []);
+
+  const onEditorFileConsumed = useCallback(() => {
+    setPendingEditorFile(null);
+  }, []);
+
+  // Persist settings
   useEffect(() => {
     localStorage.setItem('localcortex-settings', JSON.stringify(settings));
   }, [settings]);
@@ -73,11 +93,20 @@ function App() {
 
       {/* Main Content */}
       <div className="main-view">
-        {currentView === 'gpt' ? (
-          <GptView fontSize={settings.fontSize} />
-        ) : (
-          <EditorView settings={settings} />
-        )}
+        <div style={{ display: currentView === 'gpt' ? 'flex' : 'none', flex: 1, width: '100%', height: '100%', overflow: 'hidden' }}>
+          <GptView
+            fontSize={settings.fontSize}
+            onSendToEditor={sendToEditor}
+          />
+        </div>
+        <div style={{ display: currentView === 'editor' ? 'flex' : 'none', flex: 1, width: '100%', height: '100%', overflow: 'hidden' }}>
+          <EditorView
+            settings={settings}
+            setSettings={setSettings}
+            pendingEditorFile={pendingEditorFile}
+            onEditorFileConsumed={onEditorFileConsumed}
+          />
+        </div>
       </div>
 
       <SettingsModal

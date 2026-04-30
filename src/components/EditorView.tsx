@@ -1,19 +1,32 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import Editor from '@monaco-editor/react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import Editor, { DiffEditor } from '@monaco-editor/react';
 import {
   FileJson, FileCode2, FileType, ChevronRight,
   ChevronDown, Search, FolderOpen, Save, Folder, File,
-  Terminal as TerminalIcon,
+  Terminal as TerminalIcon, RotateCw, Bot, Check, Copy, Download,
+  GitBranch, SplitSquareHorizontal, Sparkles, Eye, EyeOff,
+  X as CloseIcon, Blocks, Play, AlignLeft,
 } from 'lucide-react';
+import { emit } from '@tauri-apps/api/event';
 import ReactMarkdown from 'react-markdown';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { open, confirm } from '@tauri-apps/plugin-dialog';
+import { Command } from '@tauri-apps/plugin-shell';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import TopMenuBar from './TopMenuBar';
 import ModelSelector from './ModelSelector';
 import TerminalPanel from './TerminalPanel';
 import CommandPalette from './CommandPalette';
 import type { AppSettings } from './SettingsModal';
+import type { EditorFile } from '../App';
+import AgentPanel from './AgentPanel';
+import GitPanel from './GitPanel';
+import SearchPanel from './SearchPanel';
+import InlineAIWidget from './InlineAIWidget';
+import ExtensionsPanel from './ExtensionsPanel';
+import StatusBar from './StatusBar';
+import { BeardedTheme, GitHubDarkTheme } from '../themes';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -40,6 +53,9 @@ interface OpenTab {
 
 interface EditorViewProps {
   settings: AppSettings;
+  setSettings: (s: AppSettings) => void;
+  pendingEditorFile?: EditorFile | null;
+  onEditorFileConsumed?: () => void;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -128,9 +144,40 @@ function FileTreeNode({
   );
 }
 
+function CopilotMsgActions({ content, onAppend }: { content: string; onAppend: (c: string) => void }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  const handleDownload = () => {
+    const blob = new Blob([content], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'copilot-response.md';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+  return (
+    <div style={{ display: 'flex', gap: '8px', marginTop: '8px', opacity: 0.7 }}>
+      <button onClick={handleCopy} title="Copy" style={{ background: 'none', border: 'none', color: copied ? '#4caf50' : 'var(--vscode-text)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px' }}>
+        {copied ? <Check size={12} /> : <Copy size={12} />} Copy
+      </button>
+      <button onClick={handleDownload} title="Download .md" style={{ background: 'none', border: 'none', color: 'var(--vscode-text)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px' }}>
+        <Download size={12} /> Download
+      </button>
+      <button onClick={() => onAppend(content)} title="Append to current file" style={{ background: 'none', border: 'none', color: 'var(--vscode-text)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px' }}>
+        <FileCode2 size={12} /> Send to Editor
+      </button>
+    </div>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-const EditorView: React.FC<EditorViewProps> = ({ settings }) => {
+const EditorView: React.FC<EditorViewProps> = ({ settings, setSettings, pendingEditorFile, onEditorFileConsumed }) => {
   const { fontSize, tabSize, wordWrap, lineNumbers, minimap, terminalFontSize, theme } = settings;
 
   const [currentModel, setCurrentModel] = useState('llama3.2:latest');
@@ -150,16 +197,147 @@ const EditorView: React.FC<EditorViewProps> = ({ settings }) => {
   const [openTabs, setOpenTabs] = useState<OpenTab[]>([]);
   const [activeTabIndex, setActiveTabIndex] = useState(-1);
 
-  // Terminal
+  // Resizable panels
+  const [sidebarWidth, setSidebarWidth] = useState(220);
+  const [copilotWidth, setCopilotWidth] = useState(300);
+  const [terminalHeight, setTerminalHeight] = useState(220);
   const [showTerminal, setShowTerminal] = useState(false);
-  const [terminalHeight] = useState(220);
+  const [showSidebar, setShowSidebar] = useState(true);
+  const [showCopilot, setShowCopilot] = useState(true);
 
   // Recent files
   const [recentFiles, setRecentFiles] = useState<string[]>([]);
   // Command palette
   const [showPalette, setShowPalette] = useState(false);
+  // Copilot side-panel mode: standard chat or autonomous agent
+  const [copilotMode, setCopilotMode] = useState<'chat' | 'agent'>('chat');
+  // Index status from Rust backend
+  const [indexChunks, setIndexChunks] = useState(0);
+  const [indexing, setIndexing] = useState(false);
+
+  // ── New: Sidebar tab ────────────────────────────────────────────────────────
+  const [sidebarTab, setSidebarTab] = useState<'explorer' | 'git' | 'search' | 'extensions'>('explorer');
+
+  // ── New: Git state ──────────────────────────────────────────────────────────
+  const [gitBranch, setGitBranch] = useState('');
+  const [gitDirtyCount, setGitDirtyCount] = useState(0);
+  const [diffContent, setDiffContent] = useState<string | null>(null);
+
+  // ── New: Inline AI (Ctrl+K) ─────────────────────────────────────────────────
+  const [showInlineAI, setShowInlineAI] = useState(false);
+  const [inlineAILine, setInlineAILine] = useState(1);
+
+  // ── New: Split editor ───────────────────────────────────────────────────────
+  const [splitTabIndex, setSplitTabIndex] = useState<number | null>(null);
+
+  // ── New: Markdown preview mode ──────────────────────────────────────────────
+  const [mdPreviewOnly, setMdPreviewOnly] = useState(false);
+
+  // ── New: Cursor position ────────────────────────────────────────────────────
+  const [cursorPos, setCursorPos] = useState({ line: 1, col: 1 });
+  const editorRef = useRef<any>(null);
+
+  // ── Code Runner Logic ───────────────────────────────────────────────────────
+
+
+  // ── Live Server Logic ───────────────────────────────────────────────────────
+  const handleLiveServer = useCallback(async () => {
+    if (!rootCwd) return;
+    const command = `python -m http.server 5500`;
+    setShowTerminal(true);
+    await emit('run-terminal-command', { command });
+    setTimeout(() => {
+      Command.create('cmd', ['/C', 'start', 'http://localhost:5500']).spawn().catch(console.error);
+    }, 1000);
+  }, [rootCwd]);
+
+  // ── Formatter ───────────────────────────────────────────────────────────────
+  const handleFormatDocument = useCallback(() => {
+    if (editorRef.current) {
+      editorRef.current.getAction('editor.action.formatDocument')?.run();
+    }
+  }, []);
+
+  useEffect(() => {
+    // Poll chunk count from Rust on mount
+    invoke<{ chunks: number }>('get_index_status')
+      .then(s => setIndexChunks(s.chunks))
+      .catch(() => {});
+    // Listen for live indexing progress
+    const unP = listen<{ done: number; total: number }>('index-progress', () => setIndexing(true));
+    const unD = listen<{ chunks: number }>('index-done', e => {
+      setIndexing(false);
+      setIndexChunks(e.payload.chunks);
+    });
+    return () => { unP.then(f => f()); unD.then(f => f()); };
+  }, []);
+
+  // ── Generic drag-to-resize ────────────────────────────────────────────────
+
+  const handleEditorWillMount = (monaco: any) => {
+    monaco.editor.defineTheme('bearded', BeardedTheme);
+    monaco.editor.defineTheme('github-dark', GitHubDarkTheme);
+  };
+
+  const getEditorThemeName = () => {
+    if (theme === 'bearded') return 'bearded';
+    if (theme === 'github-dark') return 'github-dark';
+    return theme === 'dark' ? 'vs-dark' : 'light';
+  };
+
+  const startDrag = useCallback(
+    (e: React.MouseEvent, setter: (v: number) => void, current: number, opts: {
+      axis: 'x' | 'y'; invert?: boolean; min: number; max: number;
+    }) => {
+      e.preventDefault();
+      const start = opts.axis === 'x' ? e.clientX : e.clientY;
+      const handle = e.currentTarget as HTMLElement;
+      handle.classList.add('dragging');
+      document.body.style.cursor = opts.axis === 'x' ? 'col-resize' : 'row-resize';
+      document.body.style.userSelect = 'none';
+
+      const onMove = (ev: MouseEvent) => {
+        const pos = opts.axis === 'x' ? ev.clientX : ev.clientY;
+        const delta = opts.invert ? start - pos : pos - start;
+        setter(Math.max(opts.min, Math.min(opts.max, current + delta)));
+      };
+      const onUp = () => {
+        handle.classList.remove('dragging');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    }, []);
 
   const activeTab = activeTabIndex >= 0 ? openTabs[activeTabIndex] : null;
+
+  // ── Code Runner Logic ───────────────────────────────────────────────────────
+  const handleRunCode = useCallback(async () => {
+    if (!activeTab) return;
+    const path = activeTab.path;
+    const noExt = path.replace(/\.[^/.]+$/, '');
+    const filenameNoExt = path.split(/[/\\]/).pop()?.split('.')[0] || '';
+    
+    let command = '';
+    switch (activeTab.language) {
+      case 'python': command = `python "${path}"`; break;
+      case 'javascript':
+      case 'typescript': command = `node "${path}"`; break;
+      case 'java': command = `javac "${path}" && java ${filenameNoExt}`; break;
+      case 'c': command = `gcc "${path}" -o "${noExt}.exe" && ."${noExt.replace(rootCwd, '')}.exe"`; break;
+      case 'cpp': command = `g++ "${path}" -o "${noExt}.exe" && ."${noExt.replace(rootCwd, '')}.exe"`; break;
+      case 'rust': command = `rustc "${path}" -o "${noExt}.exe" && ."${noExt.replace(rootCwd, '')}.exe"`; break;
+      default: return; // Language not supported
+    }
+
+    if (command) {
+      setShowTerminal(true);
+      await emit('run-terminal-command', { command });
+    }
+  }, [activeTab, rootCwd]);
 
   // ── Load recent files on mount ────────────────────────────────────────────
 
@@ -174,6 +352,37 @@ const EditorView: React.FC<EditorViewProps> = ({ settings }) => {
       return next;
     });
   }, []);
+
+  // ── Consume file sent from GPT → open as virtual unsaved tab ─────────────
+
+  useEffect(() => {
+    if (!pendingEditorFile) return;
+    const { name, content, language } = pendingEditorFile;
+    const virtualPath = `__virtual__${Date.now()}__${name}`;
+    const tab: OpenTab = { path: virtualPath, name, content, isDirty: true, language };
+    setOpenTabs(prev => {
+      const existIdx = prev.findIndex(t => t.path === virtualPath);
+      if (existIdx >= 0) {
+        setActiveTabIndex(existIdx);
+        return prev;
+      }
+      const next = [...prev, tab];
+      setActiveTabIndex(next.length - 1);
+      return next;
+    });
+    onEditorFileConsumed?.();
+  }, [pendingEditorFile, onEditorFileConsumed]);
+
+  const handleAppendToEditor = useCallback((content: string) => {
+    if (activeTabIndex < 0) return;
+    setOpenTabs(prev => {
+      const next = [...prev];
+      const tab = next[activeTabIndex];
+      next[activeTabIndex] = { ...tab, content: tab.content + (tab.content ? '\n\n' : '') + content, isDirty: true };
+      return next;
+    });
+  }, [activeTabIndex]);
+
 
   // ── Keyboard: Ctrl+S ──────────────────────────────────────────────────────
 
@@ -194,6 +403,21 @@ const EditorView: React.FC<EditorViewProps> = ({ settings }) => {
         e.preventDefault();
         setShowPalette(p => !p);
       }
+      // Ctrl+K = Inline AI
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k' && !e.shiftKey) {
+        e.preventDefault();
+        if (activeTab) {
+          const line = editorRef.current?.getPosition()?.lineNumber ?? 1;
+          setInlineAILine(line);
+          setShowInlineAI(true);
+        }
+      }
+      // Ctrl+Shift+F = Global Search
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'F' || e.key === 'f')) {
+        e.preventDefault();
+        setSidebarTab('search');
+        setShowSidebar(true);
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
@@ -202,12 +426,56 @@ const EditorView: React.FC<EditorViewProps> = ({ settings }) => {
   const saveActiveFile = useCallback(async () => {
     if (!activeTab || !activeTab.isDirty) return;
     try {
+      // Virtual tab from GPT → Save As (download via browser)
+      if (activeTab.path.startsWith('__virtual__')) {
+        const blob = new Blob([activeTab.content], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = activeTab.name;
+        a.click();
+        URL.revokeObjectURL(url);
+        setOpenTabs(prev => prev.map((t, i) =>
+          i === activeTabIndex ? { ...t, isDirty: false } : t
+        ));
+        return;
+      }
       await invoke('write_file', { path: activeTab.path, content: activeTab.content });
       setOpenTabs(prev => prev.map((t, i) =>
         i === activeTabIndex ? { ...t, isDirty: false } : t
       ));
     } catch (e) { console.error('Save failed:', e); }
   }, [activeTab, activeTabIndex]);
+
+  // ── Open file at specific line (from search results) ─────────────────────────
+  const handleOpenFileAtLine = useCallback(async (path: string, name: string, lineNumber: number, ext?: string) => {
+    await handleFileOpen(path, name, ext);
+    // Reveal line after editor mounts — small delay lets Monaco init
+    setTimeout(() => {
+      editorRef.current?.revealLineInCenter(lineNumber);
+      editorRef.current?.setPosition({ lineNumber, column: 1 });
+    }, 300);
+  }, []);
+
+  // ── Accept Inline AI result ────────────────────────────────────────────────────
+  const handleAcceptInlineAI = useCallback((newContent: string) => {
+    if (activeTabIndex < 0) return;
+    setOpenTabs(prev => prev.map((t, i) =>
+      i === activeTabIndex ? { ...t, content: newContent, isDirty: true } : t
+    ));
+  }, [activeTabIndex]);
+
+
+  // ── Refresh file tree ────────────────────────────────────────────────────
+
+  const refreshTree = useCallback(async (dir?: string) => {
+    const target = dir ?? rootCwd;
+    if (!target) return;
+    try {
+      const tree = await invoke<FileNode[]>('read_directory', { path: target });
+      setFileTree(tree);
+    } catch (e) { console.error('Refresh tree failed:', e); }
+  }, [rootCwd]);
 
   // ── Open Folder ───────────────────────────────────────────────────────────
 
@@ -351,66 +619,166 @@ const EditorView: React.FC<EditorViewProps> = ({ settings }) => {
         onOpenCommandPalette={() => setShowPalette(true)}
         recentFiles={recentFiles}
         onOpenRecentFile={handleOpenRecentFile}
+        onOpenInVSCode={() => { if (rootCwd) Command.create('cmd', ['/C', 'code', rootCwd]).spawn().catch(console.error); }}
+        onOpenInCursor={() => { if (rootCwd) Command.create('cmd', ['/C', 'cursor', rootCwd]).spawn().catch(console.error); }}
+        showSidebar={showSidebar}
+        showTerminal={showTerminal}
+        showCopilot={showCopilot}
+        onToggleSidebar={() => setShowSidebar(v => !v)}
+        onToggleCopilot={() => setShowCopilot(v => !v)}
       />
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <div className="editor-mode" style={{ flex: 1, minHeight: 0 }}>
 
-          {/* ── File Explorer ── */}
-          <div className="editor-sidebar">
-            <div className="editor-sidebar-header" style={{
-              display: 'flex', justifyContent: 'space-between',
-              alignItems: 'center', opacity: 1, padding: '10px 12px 10px 20px',
-            }}>
-              <span style={{ opacity: 0.7, fontSize: '11px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                Explorer
-              </span>
-              <button onClick={handleOpenFolder} title="Open Folder"
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--vscode-text)', opacity: 0.7, padding: '2px' }}>
-                <FolderOpen size={16} />
-              </button>
-            </div>
-
-            <div className="editor-search">
-              <div style={{ display: 'flex', alignItems: 'center', background: 'var(--vscode-input)', border: '1px solid var(--vscode-border)', padding: '2px 6px' }}>
-                <Search size={12} color="var(--vscode-text)" style={{ opacity: 0.5, marginRight: '4px', flexShrink: 0 }} />
-                <input
-                  placeholder="Search files…"
-                  value={fileSearch}
-                  onChange={e => setFileSearch(e.target.value)}
-                  style={{ background: 'transparent', border: 'none', color: 'var(--vscode-text)', fontSize: '12px', outline: 'none', width: '100%' }}
-                />
+          {/* ── Sidebar with tab strip ── */}
+          {showSidebar && (
+            <>
+              {/* Sidebar icon tab strip */}
+              <div className="sidebar-tab-strip">
+                <SidebarTabBtn
+                  active={sidebarTab === 'explorer'}
+                  onClick={() => setSidebarTab('explorer')}
+                  title="Explorer"
+                >
+                  <Folder size={20} strokeWidth={1.5} />
+                </SidebarTabBtn>
+                <SidebarTabBtn
+                  active={sidebarTab === 'git'}
+                  onClick={() => setSidebarTab('git')}
+                  title="Source Control"
+                >
+                  <span style={{ position: 'relative', display: 'inline-flex' }}>
+                    <GitBranch size={20} strokeWidth={1.5} />
+                    {gitDirtyCount > 0 && (
+                      <span style={{
+                        position: 'absolute', top: -5, right: -6,
+                        background: '#007acc', color: '#fff',
+                        fontSize: '9px', borderRadius: '10px', padding: '0 3px', minWidth: '14px',
+                        textAlign: 'center', fontWeight: 700, lineHeight: '14px',
+                      }}>{gitDirtyCount}</span>
+                    )}
+                  </span>
+                </SidebarTabBtn>
+                <SidebarTabBtn
+                  active={sidebarTab === 'search'}
+                  onClick={() => setSidebarTab('search')}
+                  title="Search (Ctrl+Shift+F)"
+                >
+                  <Search size={20} strokeWidth={1.5} />
+                </SidebarTabBtn>
+                <SidebarTabBtn
+                  active={sidebarTab === 'extensions'}
+                  onClick={() => setSidebarTab('extensions')}
+                  title="Extensions"
+                >
+                  <Blocks size={20} strokeWidth={1.5} />
+                </SidebarTabBtn>
               </div>
-            </div>
 
-            <div className="file-tree">
-              <div className="file-item" style={{ color: 'var(--vscode-text)', fontWeight: 'bold', opacity: 0.8, paddingLeft: '12px' }}>
-                <ChevronDown size={14} /> {rootName}
-              </div>
-              {fileTree.length === 0 ? (
-                <div onClick={handleOpenFolder}
-                  style={{ padding: '16px 20px', fontSize: '12px', color: 'var(--vscode-text)', opacity: 0.5, cursor: 'pointer', lineHeight: 1.6 }}>
-                  No folder open.<br />
-                  <span style={{ color: 'var(--vscode-accent)' }}>Click to Open Folder</span>
-                </div>
-              ) : (
-                fileTree.map(node => (
-                  <FileTreeNode
-                    key={node.path}
-                    node={node}
-                    depth={1}
-                    onFileClick={handleFileClick}
-                    activeFilePath={activeTab?.path ?? ''}
-                    searchQuery={fileSearch}
+              {/* Sidebar content panel */}
+              <div className="editor-sidebar" style={{ width: `${sidebarWidth}px`, minWidth: '120px', maxWidth: '600px', flexShrink: 0 }}>
+
+                {sidebarTab === 'explorer' && (
+                  <>
+                    <div className="editor-sidebar-header" style={{
+                      display: 'flex', justifyContent: 'space-between',
+                      alignItems: 'center', padding: '10px 12px 10px 20px',
+                    }}>
+                      <span style={{ opacity: 0.7, fontSize: '11px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                        Explorer
+                      </span>
+                      <button onClick={handleOpenFolder} title="Open Folder"
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--vscode-text)', opacity: 0.7, padding: '2px' }}>
+                        <FolderOpen size={16} />
+                      </button>
+                      {rootCwd && (
+                        <button onClick={() => refreshTree()} title="Refresh Explorer"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--vscode-text)', opacity: 0.7, padding: '2px' }}>
+                          <RotateCw size={14} />
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="editor-search">
+                      <div style={{ display: 'flex', alignItems: 'center', background: 'var(--vscode-input)', border: '1px solid var(--vscode-border)', padding: '2px 6px' }}>
+                        <Search size={12} color="var(--vscode-text)" style={{ opacity: 0.5, marginRight: '4px', flexShrink: 0 }} />
+                        <input
+                          placeholder="Search files…"
+                          value={fileSearch}
+                          onChange={e => setFileSearch(e.target.value)}
+                          style={{ background: 'transparent', border: 'none', color: 'var(--vscode-text)', fontSize: '12px', outline: 'none', width: '100%' }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="file-tree">
+                      <div className="file-item" style={{ color: 'var(--vscode-text)', fontWeight: 'bold', opacity: 0.8, paddingLeft: '12px' }}>
+                        <ChevronDown size={14} /> {rootName}
+                      </div>
+                      {fileTree.length === 0 ? (
+                        rootCwd ? (
+                          <div style={{ padding: '16px 20px', fontSize: '12px', color: 'var(--vscode-text)', opacity: 0.5, lineHeight: 1.6 }}>
+                            Folder is empty.<br />
+                            <span style={{ color: 'var(--vscode-accent)', cursor: 'pointer' }} onClick={() => refreshTree()}>Click to Refresh</span>
+                          </div>
+                        ) : (
+                          <div onClick={handleOpenFolder}
+                            style={{ padding: '16px 20px', fontSize: '12px', color: 'var(--vscode-text)', opacity: 0.5, cursor: 'pointer', lineHeight: 1.6 }}>
+                            No folder open.<br />
+                            <span style={{ color: 'var(--vscode-accent)' }}>Click to Open Folder</span>
+                          </div>
+                        )
+                      ) : (
+                        fileTree.map(node => (
+                          <FileTreeNode
+                            key={node.path}
+                            node={node}
+                            depth={1}
+                            onFileClick={handleFileClick}
+                            activeFilePath={activeTab?.path ?? ''}
+                            searchQuery={fileSearch}
+                          />
+                        ))
+                      )}
+                    </div>
+                  </>
+                )}
+
+                {sidebarTab === 'git' && (
+                  <GitPanel
+                    rootCwd={rootCwd}
+                    onOpenFile={(path, name, ext) => handleFileOpen(path, name, ext)}
+                    onDiffFile={(_, diff) => setDiffContent(diff)}
+                    onBranchChange={setGitBranch}
+                    onDirtyCountChange={setGitDirtyCount}
                   />
-                ))
-              )}
-            </div>
-          </div>
+                )}
+
+                {sidebarTab === 'search' && (
+                  <SearchPanel
+                    rootCwd={rootCwd}
+                    onOpenFileAtLine={handleOpenFileAtLine}
+                  />
+                )}
+
+                {sidebarTab === 'extensions' && (
+                  <ExtensionsPanel settings={settings} setSettings={setSettings} />
+                )}
+              </div>
+
+              {/* Sidebar ↔ Editor drag handle */}
+              <div
+                className="drag-handle-h"
+                onMouseDown={e => startDrag(e, setSidebarWidth, sidebarWidth, { axis: 'x', min: 120, max: 600 })}
+                title="Drag to resize"
+              />
+            </>
+          )}
 
           {/* ── Main Editor + Terminal ── */}
           <div className="editor-main">
-            {/* Tabs */}
+            {/* Tabs + action buttons */}
             <div className="editor-tabs">
               {openTabs.map((tab, i) => (
                 <div
@@ -430,79 +798,329 @@ const EditorView: React.FC<EditorViewProps> = ({ settings }) => {
                   </span>
                 </div>
               ))}
-              {/* Terminal toggle button in tab bar */}
-              <div
-                className={`editor-tab ${showTerminal ? 'active' : ''}`}
-                style={{ marginLeft: 'auto', cursor: 'pointer' }}
-                onClick={() => setShowTerminal(t => !t)}
-                title="Toggle Terminal (Ctrl+`)"
-              >
-                <TerminalIcon size={13} /> Terminal
+              {/* Right side of tab bar — actions */}
+              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '2px', paddingRight: '4px' }}>
+                {activeTab?.language === 'markdown' && (
+                  <button
+                    onClick={() => setMdPreviewOnly(v => !v)}
+                    title={mdPreviewOnly ? 'Show Editor' : 'Toggle Markdown Preview'}
+                    style={{ background: mdPreviewOnly ? 'rgba(0,122,204,0.2)' : 'none', border: 'none', cursor: 'pointer', color: 'var(--vscode-text)', opacity: 0.7, padding: '4px 6px', borderRadius: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px' }}
+                  >
+                    {mdPreviewOnly ? <EyeOff size={13} /> : <Eye size={13} />}
+                    Preview
+                  </button>
+                )}
+                {activeTab && (settings.enabledExtensions || []).includes('ext.code-runner') && ['python', 'javascript', 'typescript', 'java', 'c', 'cpp', 'rust'].includes(activeTab.language) && (
+                  <button
+                    onClick={handleRunCode}
+                    title="Run Code"
+                    style={{ background: 'rgba(226, 168, 86, 0.1)', border: '1px solid rgba(226, 168, 86, 0.3)', cursor: 'pointer', color: '#e2a856', padding: '4px 8px', borderRadius: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', fontWeight: 'bold' }}
+                  >
+                    <Play size={13} /> Run
+                  </button>
+                )}
+                {activeTab && (settings.enabledExtensions || []).includes('ext.prettier') && (
+                  <button
+                    onClick={handleFormatDocument}
+                    title="Format Document (Shift+Alt+F)"
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--vscode-text)', opacity: 0.8, padding: '4px 6px', borderRadius: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px' }}
+                  >
+                    <AlignLeft size={13} /> Format
+                  </button>
+                )}
+                {activeTab && (
+                  <button
+                    onClick={() => setShowInlineAI(true)}
+                    title="Inline AI Edit (Ctrl+K)"
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#7c7cff', opacity: 0.8, padding: '4px 6px', borderRadius: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px' }}
+                  >
+                    <Sparkles size={13} /> AI Edit
+                  </button>
+                )}
+                <button
+                  onClick={() => setSplitTabIndex(splitTabIndex === null ? activeTabIndex : null)}
+                  title={splitTabIndex !== null ? 'Close Split Editor' : 'Split Editor Right'}
+                  style={{ background: splitTabIndex !== null ? 'rgba(0,122,204,0.2)' : 'none', border: 'none', cursor: 'pointer', color: 'var(--vscode-text)', opacity: 0.7, padding: '4px 6px', borderRadius: '4px', display: 'flex', alignItems: 'center' }}
+                >
+                  <SplitSquareHorizontal size={14} />
+                </button>
+                <div
+                  className={`editor-tab ${showTerminal ? 'active' : ''}`}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => setShowTerminal(t => !t)}
+                  title="Toggle Terminal (Ctrl+J)"
+                >
+                  <TerminalIcon size={13} /> Terminal
+                </div>
               </div>
             </div>
 
+            {/* Breadcrumbs bar */}
+            {activeTab && (
+              <div className="breadcrumb-bar">
+                {activeTab.path
+                  .replace(/\\/g, '/')
+                  .split('/')
+                  .filter(Boolean)
+                  .slice(-4)
+                  .map((seg, i, arr) => (
+                    <React.Fragment key={i}>
+                      {i > 0 && <ChevronRight size={11} style={{ opacity: 0.4, flexShrink: 0 }} />}
+                      <span
+                        className={`breadcrumb-seg ${i === arr.length - 1 ? 'active' : ''}`}
+                        title={seg}
+                      >
+                        {seg}
+                      </span>
+                    </React.Fragment>
+                  ))
+                }
+              </div>
+            )}
+
             {/* Monaco Editor area + Terminal (vertical split) */}
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-              <div className="editor-container" style={{ flex: showTerminal ? 1 : 1 }}>
-                {activeTab ? (
-                  <Editor
-                    height="100%"
+              <div className="editor-container" style={{ flex: 1, display: 'flex', position: 'relative' }}>
+
+                {/* InlineAI overlay */}
+                {showInlineAI && activeTab && (
+                  <InlineAIWidget
+                    visible={showInlineAI}
+                    lineNumber={inlineAILine}
+                    fileContent={activeTab.content}
+                    fileName={activeTab.name}
                     language={activeTab.language}
-                    theme={theme === 'dark' ? 'vs-dark' : 'light'}
-                    value={activeTab.content}
-                    onChange={handleEditorChange}
-                    options={{
-                      minimap: { enabled: minimap },
-                      fontSize,
-                      fontFamily: 'var(--font-mono)',
-                      tabSize,
-                      padding: { top: 16 },
-                      smoothScrolling: true,
-                      wordWrap: wordWrap ? 'on' : 'off',
-                      lineNumbers: lineNumbers ? 'on' : 'off',
-                      renderWhitespace: 'selection',
-                      scrollBeyondLastLine: false,
-                    }}
+                    model={currentModel}
+                    onAccept={handleAcceptInlineAI}
+                    onDismiss={() => setShowInlineAI(false)}
                   />
-                ) : (
-                  <div style={{
-                    height: '100%', display: 'flex', flexDirection: 'column',
-                    alignItems: 'center', justifyContent: 'center', gap: '16px',
-                    color: 'var(--vscode-text)', opacity: 0.3,
-                  }}>
-                    <File size={56} strokeWidth={1} />
-                    <div style={{ textAlign: 'center', fontSize: '14px', lineHeight: 1.6 }}>
-                      <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>No file open</div>
-                      <div>Open a folder from the Explorer or File menu</div>
-                    </div>
-                  </div>
                 )}
+
+                {/* Main editor pane */}
+                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                  {activeTab ? (() => {
+                    const imgExts = ['png','jpg','jpeg','gif','svg','webp','ico','bmp'];
+                    const ext = activeTab.name.split('.').pop()?.toLowerCase() ?? '';
+                    const isImage = imgExts.includes(ext);
+                    const isMd = activeTab.language === 'markdown';
+
+                    if (isImage) {
+                      return (
+                        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--vscode-bg)', overflow: 'auto' }}>
+                          <img
+                            src={convertFileSrc(activeTab.path)}
+                            alt={activeTab.name}
+                            style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: '4px', boxShadow: '0 4px 24px rgba(0,0,0,0.5)' }}
+                          />
+                        </div>
+                      );
+                    }
+
+                    if (isMd && mdPreviewOnly) {
+                      return (
+                        <div className="md-preview-pane">
+                          <ReactMarkdown>{activeTab.content}</ReactMarkdown>
+                        </div>
+                      );
+                    }
+
+                    if (isMd && !mdPreviewOnly) {
+                      return (
+                        <div style={{ flex: 1, display: 'flex', minWidth: 0 }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <Editor
+                              height="100%"
+                              language={activeTab.language}
+                              theme={getEditorThemeName()}
+                              value={activeTab.content}
+                              onChange={handleEditorChange}
+                              beforeMount={handleEditorWillMount}
+                              onMount={e => { editorRef.current = e; }}
+                              options={{ minimap: { enabled: minimap }, fontSize, fontFamily: 'var(--font-mono)', tabSize, padding: { top: 16 }, smoothScrolling: true, wordWrap: wordWrap ? 'on' : 'off', lineNumbers: lineNumbers ? 'on' : 'off', scrollBeyondLastLine: false }}
+                            />
+                          </div>
+                          <div className="md-preview-pane" style={{ flex: 1, minWidth: 0, borderLeft: '1px solid var(--vscode-border)' }}>
+                            <ReactMarkdown>{activeTab.content}</ReactMarkdown>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div style={{ flex: 1, display: 'flex', minWidth: 0 }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          {diffContent ? (
+                            <DiffEditor
+                              height="100%"
+                              theme={getEditorThemeName()}
+                              original={activeTab.content}
+                              modified={activeTab.content}
+                              options={{ readOnly: true, renderSideBySide: true, minimap: { enabled: false } }}
+                            />
+                          ) : (
+                            <Editor
+                              height="100%"
+                              language={activeTab.language}
+                              theme={getEditorThemeName()}
+                              value={activeTab.content}
+                              onChange={handleEditorChange}
+                              beforeMount={handleEditorWillMount}
+                              onMount={editor => {
+                                editorRef.current = editor;
+                                editor.onDidChangeCursorPosition(e => {
+                                  setCursorPos({ line: e.position.lineNumber, col: e.position.column });
+                                });
+                              }}
+                              options={{
+                                minimap: { enabled: minimap },
+                                fontSize, fontFamily: 'var(--font-mono)', tabSize,
+                                padding: { top: 16 }, smoothScrolling: true,
+                                wordWrap: wordWrap ? 'on' : 'off',
+                                lineNumbers: lineNumbers ? 'on' : 'off',
+                                renderWhitespace: 'selection', scrollBeyondLastLine: false,
+                              }}
+                            />
+                          )}
+                        </div>
+                        {/* Split editor pane */}
+                        {splitTabIndex !== null && openTabs[splitTabIndex] && (
+                          <>
+                            <div className="drag-handle-h" onMouseDown={e => startDrag(e, () => {}, 0, { axis: 'x', min: 200, max: 800 })} />
+                            <div style={{ flex: 1, minWidth: 0, borderLeft: '1px solid var(--vscode-border)', display: 'flex', flexDirection: 'column' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', padding: '0 8px', height: '35px', background: 'var(--vscode-sidebar)', borderBottom: '1px solid var(--vscode-border)', fontSize: '12px', gap: '6px' }}>
+                                <FileIcon ext={openTabs[splitTabIndex].name.split('.').pop()} isDir={false} />
+                                <span style={{ opacity: 0.8 }}>{openTabs[splitTabIndex].name}</span>
+                                <div style={{ flex: 1 }} />
+                                <button onClick={() => setSplitTabIndex(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--vscode-text)', opacity: 0.5, display: 'flex' }}><CloseIcon size={13} /></button>
+                              </div>
+                              <Editor
+                                height="100%"
+                                language={openTabs[splitTabIndex].language}
+                                theme={theme === 'dark' ? 'vs-dark' : 'light'}
+                                value={openTabs[splitTabIndex].content}
+                                options={{ minimap: { enabled: false }, fontSize, fontFamily: 'var(--font-mono)', tabSize, readOnly: true, scrollBeyondLastLine: false }}
+                              />
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })() : (
+                    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px', color: 'var(--vscode-text)', opacity: 0.3 }}>
+                      <File size={56} strokeWidth={1} />
+                      <div style={{ textAlign: 'center', fontSize: '14px', lineHeight: 1.6 }}>
+                        <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>No file open</div>
+                        <div>Open a folder from the Explorer or File menu</div>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {showTerminal && (
-                <div style={{ height: `${terminalHeight}px`, flexShrink: 0 }}>
-                  <TerminalPanel
-                    cwd={rootCwd || 'C:\\'}
-                    fontSize={terminalFontSize}
-                    onClose={() => setShowTerminal(false)}
+                <>
+                  {/* Terminal ↕ Editor drag handle */}
+                  <div
+                    className="drag-handle-v"
+                    onMouseDown={e => startDrag(e, setTerminalHeight, terminalHeight, { axis: 'y', invert: true, min: 100, max: 600 })}
+                    title="Drag to resize terminal"
                   />
-                </div>
+                  <div style={{ height: `${terminalHeight}px`, flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
+                    {/* Tab bar */}
+                    <div style={{
+                      display: 'flex', alignItems: 'center', height: '30px',
+                      background: 'var(--vscode-sidebar)', borderBottom: '1px solid var(--vscode-border)',
+                      paddingLeft: '8px', gap: '0', flexShrink: 0,
+                    }}>
+                      <div style={{
+                        padding: '0 14px', height: '100%', display: 'flex', alignItems: 'center',
+                        fontSize: '12px', fontWeight: 600,
+                        color: 'var(--vscode-text-active)',
+                        borderBottom: '2px solid var(--vscode-accent)',
+                        textTransform: 'capitalize',
+                      }}>
+                        &gt;_ Terminal
+                      </div>
+                      <div style={{ flex: 1 }} />
+                      {/* Index status pill */}
+                      {(indexing || indexChunks > 0) && (
+                        <span style={{
+                          fontSize: '10px',
+                          color: indexing ? '#fa0' : '#4caf50',
+                          marginRight: '12px',
+                          background: 'rgba(255,255,255,0.06)',
+                          padding: '2px 8px', borderRadius: '10px',
+                        }}>
+                          {indexing ? 'Indexing…' : `${indexChunks.toLocaleString()} chunks`}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Panel content */}
+                    <div style={{ flex: 1, overflow: 'hidden', display: 'block' }}>
+                      <TerminalPanel
+                        cwd={rootCwd || 'C:\\'}
+                        fontSize={terminalFontSize}
+                        onClose={() => setShowTerminal(false)}
+                        onCommandDone={refreshTree}
+                      />
+                    </div>
+                  </div>
+                </>
               )}
             </div>
           </div>
 
-          {/* ── AI Copilot Panel ── */}
-          <div className="editor-chat-panel">
-            <div className="chat-panel-header">
-              <span>AI Copilot</span>
-              {activeTab && (
-                <span style={{ fontSize: '10px', opacity: 0.5, maxWidth: '110px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  📄 {activeTab.name}
+          {/* Editor ↔ Copilot drag handle */}
+          {showCopilot && (
+            <>
+              <div
+                className="drag-handle-h"
+                onMouseDown={e => startDrag(e, setCopilotWidth, copilotWidth, { axis: 'x', invert: true, min: 200, max: 600 })}
+                title="Drag to resize copilot"
+              />
+
+              {/* ── AI Copilot Panel (draggable width) ── */}
+              <div className="editor-chat-panel" style={{ width: `${copilotWidth}px`, minWidth: '200px', maxWidth: '600px', flexShrink: 0 }}>
+            <div className="chat-panel-header" style={{ paddingBottom: '0', flexDirection: 'column', alignItems: 'stretch' }}>
+              <div style={{ display: 'flex', alignItems: 'center', width: '100%', marginBottom: '6px' }}>
+                <span style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Bot size={14} /> AI Copilot
                 </span>
-              )}
+                <div style={{ flex: 1 }} />
+                {activeTab && (
+                  <span style={{ fontSize: '10px', opacity: 0.5, maxWidth: '110px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    📄 {activeTab.name}
+                  </span>
+                )}
+              </div>
+              {/* Toggle Chat | Agent */}
+              <div style={{ display: 'flex', width: '100%', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                {(['chat', 'agent'] as const).map(mode => (
+                  <button
+                    key={mode}
+                    onClick={() => setCopilotMode(mode)}
+                    style={{
+                      flex: 1, background: 'none', border: 'none', padding: '6px 0', cursor: 'pointer',
+                      fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px',
+                      color: copilotMode === mode ? 'var(--vscode-text-active)' : 'rgba(255,255,255,0.4)',
+                      borderBottom: copilotMode === mode ? '2px solid var(--vscode-accent)' : '2px solid transparent',
+                      transition: 'all 0.2s',
+                    }}
+                  >
+                    {mode === 'agent' ? '🤖 Agent' : '💬 Chat'}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            <div className="panel-chat-messages" style={{ fontSize: `${Math.max(12, fontSize - 2)}px` }}>
+            {copilotMode === 'agent' ? (
+              <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+                <AgentPanel workspace={rootCwd || '.'} model={currentModel} fontSize={terminalFontSize} />
+              </div>
+            ) : (
+              <>
+                <div className="panel-chat-messages" style={{ fontSize: `${Math.max(12, fontSize - 2)}px` }}>
               {messages.map((msg, i) => (
                 <div key={i} className={`panel-message ${msg.role}`}>
                   <div style={{
@@ -518,7 +1136,10 @@ const EditorView: React.FC<EditorViewProps> = ({ settings }) => {
                       borderTopColor: 'transparent', borderRadius: '50%',
                     }} />
                   ) : (
-                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                    <>
+                      <ReactMarkdown>{msg.content}</ReactMarkdown>
+                      <CopilotMsgActions content={msg.content} onAppend={handleAppendToEditor} />
+                    </>
                   )}
                 </div>
               ))}
@@ -554,11 +1175,60 @@ const EditorView: React.FC<EditorViewProps> = ({ settings }) => {
                 </button>
               </form>
             </div>
+            </>
+            )}
           </div>
+          </>
+          )}
         </div>
       </div>
+      {/* ── Status Bar ── */}
+      <StatusBar
+        language={activeTab?.language ?? ''}
+        lineNumber={cursorPos.line}
+        column={cursorPos.col}
+        tabSize={tabSize}
+        encoding="UTF-8"
+        gitBranch={gitBranch}
+        gitDirtyCount={gitDirtyCount}
+        indexChunks={indexChunks}
+        indexing={indexing}
+        activeFileName={activeTab?.name}
+        isLiveServerEnabled={(settings.enabledExtensions || []).includes('ext.live-server')}
+        onStartLiveServer={handleLiveServer}
+      />
     </div>
   );
 };
 
 export default EditorView;
+
+// ── SidebarTabBtn helper ─────────────────────────────────────────────────────
+function SidebarTabBtn({
+  children, active, onClick, title,
+}: {
+  children: React.ReactNode;
+  active: boolean;
+  onClick: () => void;
+  title?: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      style={{
+        width: '100%', background: 'none', border: 'none',
+        borderLeft: active ? '2px solid var(--vscode-accent)' : '2px solid transparent',
+        color: active ? 'var(--vscode-text-active)' : 'var(--vscode-text)',
+        opacity: active ? 1 : 0.55,
+        cursor: 'pointer', padding: '10px 0',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        transition: 'all 0.15s',
+      }}
+      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity = '1'; }}
+      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = active ? '1' : '0.55'; }}
+    >
+      {children}
+    </button>
+  );
+}

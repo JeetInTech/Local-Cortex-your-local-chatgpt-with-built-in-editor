@@ -2,13 +2,14 @@ import React from 'react';
 import { X, Moon, Sun, Minus, Plus } from 'lucide-react';
 
 export interface AppSettings {
-  theme: 'dark' | 'light';
+  theme: 'dark' | 'light' | 'bearded' | 'github-dark';
   fontSize: number;
   tabSize: number;
   wordWrap: boolean;
   lineNumbers: boolean;
   minimap: boolean;
   terminalFontSize: number;
+  enabledExtensions: string[];
 }
 
 interface SettingsModalProps {

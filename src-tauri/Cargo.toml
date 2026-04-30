@@ -29,4 +29,7 @@ tauri-plugin-dialog = "2.7.0"
 tauri-plugin-fs = "2.5.0"
 dirs-next = "2.0.0"
 tauri-plugin-shell = "2.3.5"
-
+rayon = "1.10"
+ignore = "0.4.23"
+uuid = { version = "1.11.0", features = ["v4", "fast-rng"] }
+regex = "1.11.1"

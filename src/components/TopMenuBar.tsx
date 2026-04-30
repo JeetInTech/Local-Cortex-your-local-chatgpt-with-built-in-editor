@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { PanelLeft, PanelBottom, PanelRight } from 'lucide-react';
 
 interface TopMenuBarProps {
   onOpenFolder?: () => void;
@@ -7,6 +8,13 @@ interface TopMenuBarProps {
   onOpenCommandPalette?: () => void;
   recentFiles?: string[];
   onOpenRecentFile?: (path: string) => void;
+  onOpenInVSCode?: () => void;
+  onOpenInCursor?: () => void;
+  showSidebar?: boolean;
+  showTerminal?: boolean;
+  showCopilot?: boolean;
+  onToggleSidebar?: () => void;
+  onToggleCopilot?: () => void;
 }
 
 interface MenuItem {
@@ -24,6 +32,13 @@ const TopMenuBar: React.FC<TopMenuBarProps> = ({
   onOpenCommandPalette,
   recentFiles = [],
   onOpenRecentFile,
+  onOpenInVSCode,
+  onOpenInCursor,
+  showSidebar,
+  showTerminal,
+  showCopilot,
+  onToggleSidebar,
+  onToggleCopilot,
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -49,6 +64,9 @@ const TopMenuBar: React.FC<TopMenuBarProps> = ({
     File: [
       { label: 'Open Folder…', action: () => { onOpenFolder?.(); setOpenMenu(null); }, shortcut: 'Ctrl+K Ctrl+O' },
       { label: 'Open Recent', submenu: recentItems },
+      { label: '', separator: true },
+      { label: 'Open in VS Code', action: () => { onOpenInVSCode?.(); setOpenMenu(null); } },
+      { label: 'Open in Cursor', action: () => { onOpenInCursor?.(); setOpenMenu(null); } },
       { label: '', separator: true },
       { label: 'Save', action: () => { onSave?.(); setOpenMenu(null); }, shortcut: 'Ctrl+S' },
       { label: '', separator: true },
@@ -89,6 +107,21 @@ const TopMenuBar: React.FC<TopMenuBarProps> = ({
           onMouseEnterMenu={() => { if (openMenu) setOpenMenu(name); }}
         />
       ))}
+      
+      <div style={{ flex: 1 }} />
+      
+      {/* Layout Toggles */}
+      <div style={{ display: 'flex', gap: '4px', marginRight: '16px', alignItems: 'center' }}>
+        <button onClick={onToggleSidebar} title="Toggle Primary Side Bar" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--vscode-text)', opacity: showSidebar ? 1 : 0.4, display: 'flex', alignItems: 'center', padding: '4px' }}>
+          <PanelLeft size={16} />
+        </button>
+        <button onClick={onToggleTerminal} title="Toggle Panel" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--vscode-text)', opacity: showTerminal ? 1 : 0.4, display: 'flex', alignItems: 'center', padding: '4px' }}>
+          <PanelBottom size={16} />
+        </button>
+        <button onClick={onToggleCopilot} title="Toggle Secondary Side Bar" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--vscode-text)', opacity: showCopilot ? 1 : 0.4, display: 'flex', alignItems: 'center', padding: '4px' }}>
+          <PanelRight size={16} />
+        </button>
+      </div>
     </div>
   );
 };

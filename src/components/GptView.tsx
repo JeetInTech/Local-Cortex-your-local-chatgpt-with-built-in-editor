@@ -1,11 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Plus, Send, Bot, User, Search, Trash2, MessageSquare } from 'lucide-react';
+import { Plus, Send, Bot, User, Search, Trash2, MessageSquare, Copy, Check, Download } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import ModelSelector from './ModelSelector';
+import CodeBlock from './CodeBlock';
+import type { EditorFile } from '../App';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -24,6 +24,7 @@ interface ChatSession {
 
 interface GptViewProps {
   fontSize: number;
+  onSendToEditor?: (file: EditorFile) => void;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -44,9 +45,89 @@ const WELCOME_MSG: Message = {
   content: 'Hello! I\'m your **Local Cortex** research assistant. Ask me anything — I run fully offline on your local hardware.',
 };
 
+// ─── Message action bar ───────────────────────────────────────────────────────
+
+function MsgActions({ content, onSendAll, filename }: {
+  content: string;
+  onSendAll?: (name: string, content: string, lang: string) => void;
+  filename?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleDownloadMd = () => {
+    const blob = new Blob([content], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename ?? 'response.md';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleSendMd = () => {
+    onSendAll?.(filename ?? 'response.md', content, 'markdown');
+  };
+
+  return (
+    <div style={{
+      display: 'flex', gap: '2px', marginTop: '8px',
+      opacity: 0, transition: 'opacity 0.15s',
+    }}
+      className="msg-actions"
+    >
+      <MsgBtn onClick={handleCopy} title={copied ? 'Copied!' : 'Copy message'}>
+        {copied ? <Check size={13} color="#4caf50" /> : <Copy size={13} />}
+        <span>{copied ? 'Copied' : 'Copy'}</span>
+      </MsgBtn>
+      <MsgBtn onClick={handleDownloadMd} title="Download as Markdown">
+        <Download size={13} />
+        <span>Download .md</span>
+      </MsgBtn>
+      <MsgBtn onClick={handleSendMd} title="Send to Local Cortex Editor">
+        <span>🧠</span>
+        <span>Open in Editor</span>
+      </MsgBtn>
+    </div>
+  );
+}
+
+function MsgBtn({ children, onClick, title }: {
+  children: React.ReactNode; onClick?: () => void; title?: string;
+}) {
+  return (
+    <div
+      onClick={onClick}
+      title={title}
+      style={{
+        display: 'flex', alignItems: 'center', gap: '4px',
+        padding: '3px 8px', borderRadius: '4px', cursor: 'pointer',
+        fontSize: '11px', color: 'var(--gpt-text-muted)',
+        background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+        transition: 'all 0.1s',
+      }}
+      onMouseEnter={e => {
+        (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.1)';
+        (e.currentTarget as HTMLElement).style.color = '#fff';
+      }}
+      onMouseLeave={e => {
+        (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.04)';
+        (e.currentTarget as HTMLElement).style.color = 'var(--gpt-text-muted)';
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
-const GptView: React.FC<GptViewProps> = ({ fontSize }) => {
+const GptView: React.FC<GptViewProps> = ({ fontSize, onSendToEditor }) => {
   const [currentModel, setCurrentModel] = useState('llama3.2:latest');
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -54,8 +135,6 @@ const GptView: React.FC<GptViewProps> = ({ fontSize }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  // ── Derived: active session messages ──────────────────────────────────────
 
   const activeSession = sessions.find(s => s.id === activeSessionId) ?? null;
   const messages: Message[] = activeSession?.messages ?? [WELCOME_MSG];
@@ -70,10 +149,8 @@ const GptView: React.FC<GptViewProps> = ({ fontSize }) => {
           setActiveSessionId(loaded[0].id);
         }
       })
-      .catch(() => {/* first run, no history */});
+      .catch(() => {});
   }, []);
-
-  // ── Persistence: save on change ───────────────────────────────────────────
 
   const saveSessions = useCallback((updated: ChatSession[]) => {
     invoke('save_chat_history', { sessions: updated }).catch(console.error);
@@ -89,10 +166,8 @@ const GptView: React.FC<GptViewProps> = ({ fontSize }) => {
 
   const handleNewChat = () => {
     const newSession: ChatSession = {
-      id: generateId(),
-      title: 'New Chat',
-      created_at: Date.now(),
-      messages: [],
+      id: generateId(), title: 'New Chat',
+      created_at: Date.now(), messages: [],
     };
     const updated = [newSession, ...sessions];
     setSessions(updated);
@@ -107,9 +182,7 @@ const GptView: React.FC<GptViewProps> = ({ fontSize }) => {
     const updated = sessions.filter(s => s.id !== id);
     setSessions(updated);
     saveSessions(updated);
-    if (activeSessionId === id) {
-      setActiveSessionId(updated[0]?.id ?? null);
-    }
+    if (activeSessionId === id) setActiveSessionId(updated[0]?.id ?? null);
   };
 
   // ── Send Message ──────────────────────────────────────────────────────────
@@ -120,16 +193,13 @@ const GptView: React.FC<GptViewProps> = ({ fontSize }) => {
 
     const userMsg: Message = { id: generateId(), role: 'user', content: input };
 
-    // Create or update session
     let targetSession: ChatSession;
     let allSessions: ChatSession[];
 
     if (!activeSession) {
       targetSession = {
-        id: generateId(),
-        title: sessionTitle([userMsg]),
-        created_at: Date.now(),
-        messages: [userMsg],
+        id: generateId(), title: sessionTitle([userMsg]),
+        created_at: Date.now(), messages: [userMsg],
       };
       allSessions = [targetSession, ...sessions];
     } else {
@@ -141,7 +211,6 @@ const GptView: React.FC<GptViewProps> = ({ fontSize }) => {
       allSessions = sessions.map(s => s.id === targetSession.id ? targetSession : s);
     }
 
-    // Add empty AI placeholder
     const aiPlaceholder: Message = { id: generateId(), role: 'ai', content: '' };
     const withAi: ChatSession = { ...targetSession, messages: [...targetSession.messages, aiPlaceholder] };
     const withAiAll = allSessions.map(s => s.id === withAi.id ? withAi : s);
@@ -154,7 +223,6 @@ const GptView: React.FC<GptViewProps> = ({ fontSize }) => {
     const streamId = generateId();
     const aiMsgId = aiPlaceholder.id;
 
-    // Per-request isolated listener
     const unlistenStream = await listen<string>(`chat-stream-${streamId}`, (event) => {
       setSessions(prev => prev.map(s => {
         if (s.id !== withAi.id) return s;
@@ -170,7 +238,6 @@ const GptView: React.FC<GptViewProps> = ({ fontSize }) => {
       setIsGenerating(false);
       unlistenStream();
       unlistenDone();
-      // Save after stream completes
       setSessions(prev => { saveSessions(prev); return prev; });
     });
 
@@ -190,18 +257,21 @@ const GptView: React.FC<GptViewProps> = ({ fontSize }) => {
         const idx = s.messages.findIndex(m => m.id === aiMsgId);
         if (idx < 0) return s;
         const updated = [...s.messages];
-        updated[idx] = { ...updated[idx], content: `**Error:** Failed to connect to Ollama.\n\nMake sure Ollama is running, then try again.\n\n\`${error}\`` };
+        updated[idx] = { ...updated[idx], content: `**Error:** Failed to connect to Ollama.\n\nMake sure Ollama is running.\n\n\`${error}\`` };
         return { ...s, messages: updated };
       }));
     }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit(e);
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(e); }
   };
+
+  // ── Send to editor ────────────────────────────────────────────────────────
+
+  const handleSendToEditor = useCallback((name: string, content: string, language: string) => {
+    onSendToEditor?.({ name, content, language });
+  }, [onSendToEditor]);
 
   // ── Filtered history ──────────────────────────────────────────────────────
 
@@ -217,8 +287,7 @@ const GptView: React.FC<GptViewProps> = ({ fontSize }) => {
       {/* ── Sidebar ── */}
       <div className="gpt-sidebar">
         <button className="gpt-new-chat-btn" onClick={handleNewChat}>
-          <Plus size={16} />
-          New chat
+          <Plus size={16} /> New chat
         </button>
 
         <div className="gpt-search">
@@ -242,9 +311,7 @@ const GptView: React.FC<GptViewProps> = ({ fontSize }) => {
               className={`gpt-history-item ${session.id === activeSessionId ? 'active' : ''}`}
               onClick={() => setActiveSessionId(session.id)}
               style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
+                display: 'flex', alignItems: 'center', gap: '8px',
                 background: session.id === activeSessionId ? 'rgba(255,255,255,0.08)' : undefined,
               }}
             >
@@ -256,8 +323,7 @@ const GptView: React.FC<GptViewProps> = ({ fontSize }) => {
                 onClick={e => handleDeleteSession(session.id, e)}
                 style={{
                   background: 'none', border: 'none', cursor: 'pointer',
-                  color: 'var(--gpt-text-muted)', opacity: 0, padding: '2px',
-                  flexShrink: 0,
+                  color: 'var(--gpt-text-muted)', opacity: 0, padding: '2px', flexShrink: 0,
                 }}
                 className="delete-session-btn"
                 title="Delete"
@@ -294,8 +360,8 @@ const GptView: React.FC<GptViewProps> = ({ fontSize }) => {
               <div style={{ fontSize: '14px' }}>Running locally on <strong>{currentModel}</strong></div>
             </div>
           ) : (
-            messages.map(msg => (
-              <div key={msg.id} className="gpt-message">
+            messages.map((msg, idx) => (
+              <div key={msg.id} className="gpt-message" style={{ position: 'relative' }}>
                 <div className={`gpt-avatar ${msg.role}`}>
                   {msg.role === 'ai' ? <Bot size={18} /> : <User size={18} />}
                 </div>
@@ -307,22 +373,51 @@ const GptView: React.FC<GptViewProps> = ({ fontSize }) => {
                       borderTopColor: 'transparent', borderRadius: '50%',
                     }} />
                   ) : (
-                    <ReactMarkdown
-                      components={{
-                        code({ node, inline, className, children, ...props }: any) {
-                          const match = /language-(\w+)/.exec(className || '');
-                          return !inline && match ? (
-                            <SyntaxHighlighter style={vscDarkPlus as any} language={match[1]} PreTag="div" {...props}>
-                              {String(children).replace(/\n$/, '')}
-                            </SyntaxHighlighter>
-                          ) : (
-                            <code className={className} {...props}>{children}</code>
-                          );
-                        }
-                      }}
-                    >
-                      {msg.content}
-                    </ReactMarkdown>
+                    <>
+                      <ReactMarkdown
+                        components={{
+                          // ── Custom code block with actions ──
+                          code({ node, inline, className, children, ...props }: any) {
+                            const match = /language-(\w+)/.exec(className || '');
+                            const code = String(children).replace(/\n$/, '');
+                            if (!inline && match) {
+                              // Try to find a filename from the previous paragraph/text node
+                              return (
+                                <CodeBlock
+                                  code={code}
+                                  language={match[1]}
+                                  onSendToEditor={handleSendToEditor}
+                                />
+                              );
+                            }
+                            return (
+                              <code
+                                style={{
+                                  background: 'rgba(255,255,255,0.1)',
+                                  padding: '1px 5px', borderRadius: '3px',
+                                  fontFamily: "'Cascadia Code', monospace",
+                                  fontSize: '0.9em',
+                                }}
+                                {...props}
+                              >
+                                {children}
+                              </code>
+                            );
+                          },
+                        }}
+                      >
+                        {msg.content}
+                      </ReactMarkdown>
+
+                      {/* Message-level actions — only on AI messages with content */}
+                      {msg.role === 'ai' && msg.content && (
+                        <MsgActions
+                          content={msg.content}
+                          filename={`message-${idx + 1}.md`}
+                          onSendAll={handleSendToEditor}
+                        />
+                      )}
+                    </>
                   )}
                 </div>
               </div>

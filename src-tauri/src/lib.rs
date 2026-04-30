@@ -1,7 +1,22 @@
+mod rag;
+mod agent;
+
 use serde::{Deserialize, Serialize};
-use tauri::{Emitter, Manager, Window};
+use tauri::{Emitter, Manager, Window, State};
 use futures_util::StreamExt;
 use std::path::PathBuf;
+use std::sync::Arc;
+
+// ─────────────────────────────────────────────
+// GLOBAL APP STATE
+// ─────────────────────────────────────────────
+
+pub struct AppState {
+    pub store:     Arc<rag::VectorStore>,
+    pub approvals: agent::ApprovalMap,
+    // index progress (progress, total)
+    pub index_progress: tokio::sync::Mutex<(usize, usize, String)>,
+}
 
 // ─────────────────────────────────────────────
 // CHAT / AI TYPES
@@ -377,6 +392,15 @@ fn load_recent_files(app: tauri::AppHandle) -> Result<Vec<String>, String> {
 }
 
 // ─────────────────────────────────────────────
+// COMMAND: GET TEMP DIRECTORY
+// ─────────────────────────────────────────────
+
+#[tauri::command]
+fn get_temp_dir() -> String {
+    std::env::temp_dir().to_string_lossy().to_string()
+}
+
+// ─────────────────────────────────────────────
 // TERMINAL COMMAND RUNNER
 // ─────────────────────────────────────────────
 
@@ -444,26 +468,354 @@ async fn run_terminal_command(
 }
 
 // ─────────────────────────────────────────────
+// COMMAND: INDEX DIRECTORY (RAG)
+// ─────────────────────────────────────────────
+
+#[tauri::command]
+async fn index_directory(
+    state: State<'_, AppState>,
+    window: Window,
+    dir: String,
+    reindex: bool,
+) -> Result<(), String> {
+    let store = state.store.clone();
+    if reindex {
+        store.clear_directory(&dir).await;
+    }
+
+    let chunks = rag::chunk_directory(std::path::Path::new(&dir));
+    let _total   = chunks.len();
+
+    let win2 = window.clone();
+    store.add_chunks(chunks, move |done, total| {
+        let _ = win2.emit("index-progress", serde_json::json!({"done": done, "total": total}));
+    }).await?;
+
+    store.save().await?;
+    let _ = window.emit("index-done", serde_json::json!({"chunks": store.record_count().await}));
+    Ok(())
+}
+
+// ─────────────────────────────────────────────
+// COMMAND: RAG SEARCH
+// ─────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct SearchResult {
+    file_path:  String,
+    content:    String,
+    start_line: usize,
+    end_line:   usize,
+    score:      f32,
+}
+
+#[tauri::command]
+async fn rag_search(
+    state: State<'_, AppState>,
+    query: String,
+    k: usize,
+    active_file: Option<String>,
+    recent_files: Vec<String>,
+) -> Result<Vec<SearchResult>, String> {
+    let results = state.store.search(
+        &query, k,
+        active_file.as_deref(),
+        &recent_files,
+    ).await?;
+
+    Ok(results.into_iter().map(|(chunk, score)| SearchResult {
+        file_path:  chunk.file_path,
+        content:    chunk.content,
+        start_line: chunk.start_line,
+        end_line:   chunk.end_line,
+        score,
+    }).collect())
+}
+
+// ─────────────────────────────────────────────
+// COMMAND: START AGENT
+// ─────────────────────────────────────────────
+
+#[tauri::command]
+async fn start_agent(
+    state: State<'_, AppState>,
+    window: Window,
+    id: String,
+    task: String,
+    workspace: String,
+    model: String,
+) -> Result<(), String> {
+    let store     = state.store.clone();
+    let approvals = state.approvals.clone();
+
+    tokio::spawn(async move {
+        agent::run_agent(window, id, task, workspace, model, store, approvals).await;
+    });
+
+    Ok(())
+}
+
+// ─────────────────────────────────────────────
+// COMMAND: APPROVE AGENT ACTION
+// ─────────────────────────────────────────────
+
+#[tauri::command]
+async fn agent_approve(
+    state: State<'_, AppState>,
+    action_id: String,
+    approved: bool,
+) -> Result<(), String> {
+    agent::resolve_approval(&state.approvals, &action_id, approved).await;
+    Ok(())
+}
+
+// ─────────────────────────────────────────────
+// COMMAND: INDEX STATUS
+// ─────────────────────────────────────────────
+
+#[tauri::command]
+async fn get_index_status(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let count = state.store.record_count().await;
+    Ok(serde_json::json!({ "chunks": count }))
+}
+
+// ─────────────────────────────────────────────
+// GIT COMMANDS
+// ─────────────────────────────────────────────
+
+fn run_git(args: &[&str], cwd: &str) -> Result<String, String> {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .map_err(|e| format!("git not found: {}", e))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+#[tauri::command]
+fn get_git_branch(dir: String) -> Result<String, String> {
+    run_git(&["rev-parse", "--abbrev-ref", "HEAD"], &dir)
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GitFileStatus {
+    pub status: String,
+    pub path: String,
+    pub staged: bool,
+}
+
+#[tauri::command]
+fn git_status(dir: String) -> Result<Vec<GitFileStatus>, String> {
+    let output = run_git(&["status", "--short", "--porcelain"], &dir)?;
+    let files = output
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|line| {
+            let status_chars: &str = &line[..2];
+            let path = line[3..].trim().to_string();
+            let x = &status_chars[..1];
+            let y = &status_chars[1..];
+            // Index status (staged) vs worktree (unstaged)
+            let staged = x != " " && x != "?";
+            let eff_status = if staged { x } else { y };
+            let status = match eff_status.trim() {
+                "M" => "M",
+                "A" => "A",
+                "D" => "D",
+                "R" => "R",
+                "C" => "C",
+                "?" => "?",
+                _ => eff_status.trim(),
+            }.to_string();
+            GitFileStatus { status, path, staged }
+        })
+        .collect();
+    Ok(files)
+}
+
+#[tauri::command]
+fn git_commit(dir: String, message: String) -> Result<String, String> {
+    run_git(&["add", "-A"], &dir)?;
+    run_git(&["commit", "-m", &message], &dir)
+}
+
+#[tauri::command]
+fn git_push(dir: String) -> Result<String, String> {
+    run_git(&["push"], &dir)
+}
+
+#[tauri::command]
+fn git_pull(dir: String) -> Result<String, String> {
+    run_git(&["pull"], &dir)
+}
+
+#[tauri::command]
+fn git_diff(dir: String, file_path: String) -> Result<String, String> {
+    // Try staged diff first, then unstaged
+    let staged = run_git(&["diff", "--cached", "--", &file_path], &dir).unwrap_or_default();
+    let unstaged = run_git(&["diff", "--", &file_path], &dir).unwrap_or_default();
+    let combined = format!("{}{}", staged, unstaged);
+    if combined.trim().is_empty() {
+        // Possibly untracked — show content as all-added
+        let content = std::fs::read_to_string(&file_path)
+            .unwrap_or_else(|_| "(unreadable)".to_string());
+        Ok(format!("+ (new file)\n{}", content))
+    } else {
+        Ok(combined)
+    }
+}
+
+// ─────────────────────────────────────────────
+// WORKSPACE SEARCH
+// ─────────────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SearchMatchResult {
+    pub file_path: String,
+    pub line_number: usize,
+    pub line_content: String,
+    pub match_start: usize,
+    pub match_end: usize,
+}
+
+#[tauri::command]
+fn search_in_files(
+    dir: String,
+    query: String,
+    is_regex: bool,
+    case_sensitive: bool,
+    whole_word: bool,
+) -> Result<Vec<SearchMatchResult>, String> {
+    use ignore::WalkBuilder;
+    use regex::RegexBuilder;
+
+    if query.trim().is_empty() {
+        return Ok(vec![]);
+    }
+
+    let pattern = if is_regex {
+        query.clone()
+    } else {
+        regex::escape(&query)
+    };
+
+    let pattern = if whole_word {
+        format!(r"\b{}\b", pattern)
+    } else {
+        pattern
+    };
+
+    let re = RegexBuilder::new(&pattern)
+        .case_insensitive(!case_sensitive)
+        .build()
+        .map_err(|e| format!("Invalid regex: {}", e))?;
+
+    let mut results = Vec::new();
+
+    let walker = WalkBuilder::new(&dir)
+        .hidden(true)
+        .ignore(true)
+        .git_ignore(true)
+        .build();
+
+    for entry in walker.flatten() {
+        let path = entry.path();
+        if !path.is_file() { continue; }
+        // Skip binary-likely extensions
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if matches!(ext, "exe"|"dll"|"so"|"a"|"lib"|"bin"|"png"|"jpg"|"jpeg"|"gif"|"ico"|"webp"|"wasm"|"pdf") {
+            continue;
+        }
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        for (line_idx, line) in content.lines().enumerate() {
+            for m in re.find_iter(line) {
+                results.push(SearchMatchResult {
+                    file_path: path.to_string_lossy().to_string(),
+                    line_number: line_idx + 1,
+                    line_content: line.to_string(),
+                    match_start: m.start(),
+                    match_end: m.end(),
+                });
+            }
+        }
+        if results.len() > 5000 { break; } // Safety cap
+    }
+
+    Ok(results)
+}
+
+#[tauri::command]
+fn replace_in_file(
+    path: String,
+    old_text: String,
+    new_text: String,
+    is_regex: bool,
+    case_sensitive: bool,
+) -> Result<(), String> {
+    use regex::RegexBuilder;
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let pattern = if is_regex { old_text.clone() } else { regex::escape(&old_text) };
+    let re = RegexBuilder::new(&pattern)
+        .case_insensitive(!case_sensitive)
+        .build()
+        .map_err(|e| format!("Invalid regex: {}", e))?;
+    let replaced = re.replace_all(&content, new_text.as_str()).to_string();
+    std::fs::write(&path, replaced).map_err(|e| e.to_string())
+}
+
+// ─────────────────────────────────────────────
 // APP ENTRY
 // ─────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let store     = rag::VectorStore::new();
+    let approvals = agent::new_approval_map();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .manage(AppState {
+            store,
+            approvals,
+            index_progress: tokio::sync::Mutex::new((0, 0, "idle".into())),
+        })
         .invoke_handler(tauri::generate_handler![
             generate_response,
             list_models,
             read_directory,
             read_file,
             write_file,
+            get_temp_dir,
             save_chat_history,
             load_chat_history,
             save_recent_files,
             load_recent_files,
             run_terminal_command,
+            // ── RAG + Agent ──
+            index_directory,
+            rag_search,
+            start_agent,
+            agent_approve,
+            get_index_status,
+            // ── Git ──
+            get_git_branch,
+            git_status,
+            git_commit,
+            git_push,
+            git_pull,
+            git_diff,
+            // ── Search ──
+            search_in_files,
+            replace_in_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
