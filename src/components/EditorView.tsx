@@ -199,7 +199,7 @@ const EditorView: React.FC<EditorViewProps> = ({ settings, setSettings, pendingE
 
   // Resizable panels
   const [sidebarWidth, setSidebarWidth] = useState(220);
-  const [copilotWidth, setCopilotWidth] = useState(300);
+  const [copilotWidth, setCopilotWidth] = useState(720);
   const [terminalHeight, setTerminalHeight] = useState(220);
   const [showTerminal, setShowTerminal] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
@@ -210,7 +210,7 @@ const EditorView: React.FC<EditorViewProps> = ({ settings, setSettings, pendingE
   // Command palette
   const [showPalette, setShowPalette] = useState(false);
   // Copilot side-panel mode: standard chat or autonomous agent
-  const [copilotMode, setCopilotMode] = useState<'chat' | 'agent'>('chat');
+  const [copilotMode, setCopilotMode] = useState<'chat' | 'agent'>('agent');
   // Index status from Rust backend
   const [indexChunks, setIndexChunks] = useState(0);
   const [indexing, setIndexing] = useState(false);
@@ -1076,16 +1076,16 @@ const EditorView: React.FC<EditorViewProps> = ({ settings, setSettings, pendingE
             <>
               <div
                 className="drag-handle-h"
-                onMouseDown={e => startDrag(e, setCopilotWidth, copilotWidth, { axis: 'x', invert: true, min: 200, max: 600 })}
+                onMouseDown={e => startDrag(e, setCopilotWidth, copilotWidth, { axis: 'x', invert: true, min: copilotMode === 'agent' ? 560 : 260, max: 960 })}
                 title="Drag to resize copilot"
               />
 
               {/* ── AI Copilot Panel (draggable width) ── */}
-              <div className="editor-chat-panel" style={{ width: `${copilotWidth}px`, minWidth: '200px', maxWidth: '600px', flexShrink: 0 }}>
+              <div className="editor-chat-panel" style={{ width: `${copilotWidth}px`, minWidth: copilotMode === 'agent' ? '560px' : '260px', maxWidth: '960px', flexShrink: 0 }}>
             <div className="chat-panel-header" style={{ paddingBottom: '0', flexDirection: 'column', alignItems: 'stretch' }}>
               <div style={{ display: 'flex', alignItems: 'center', width: '100%', marginBottom: '6px' }}>
                 <span style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <Bot size={14} /> AI Copilot
+                  <Bot size={14} /> Local
                 </span>
                 <div style={{ flex: 1 }} />
                 {activeTab && (
@@ -1095,7 +1095,7 @@ const EditorView: React.FC<EditorViewProps> = ({ settings, setSettings, pendingE
                 )}
               </div>
               {/* Toggle Chat | Agent */}
-              <div style={{ display: 'flex', width: '100%', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+              <div style={{ display: 'none', width: '100%', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
                 {(['chat', 'agent'] as const).map(mode => (
                   <button
                     key={mode}
@@ -1116,7 +1116,13 @@ const EditorView: React.FC<EditorViewProps> = ({ settings, setSettings, pendingE
 
             {copilotMode === 'agent' ? (
               <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-                <AgentPanel workspace={rootCwd || '.'} model={currentModel} fontSize={terminalFontSize} />
+                <AgentPanel
+                  workspace={rootCwd || '.'}
+                  model={currentModel}
+                  onModelChange={setCurrentModel}
+                  onWorkspaceChanged={() => refreshTree()}
+                  fontSize={terminalFontSize}
+                />
               </div>
             ) : (
               <>

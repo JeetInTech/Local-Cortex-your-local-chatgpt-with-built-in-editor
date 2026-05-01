@@ -110,15 +110,11 @@ if not "%OLLAMA_API_OK%"=="1" (
 )
 
 set "HAS_CHAT_MODEL=0"
-set "HAS_EMBED_MODEL=0"
-
 for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$r = Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/tags' -Method Get; foreach ($m in $r.models) { $m.name }"`) do (
     set "MODEL_NAME=%%I"
     if /I "!MODEL_NAME!"=="llama3.2" set "HAS_CHAT_MODEL=1"
     if /I "!MODEL_NAME!"=="llama3.2:latest" set "HAS_CHAT_MODEL=1"
-    if /I "!MODEL_NAME!"=="nomic-embed-text" set "HAS_EMBED_MODEL=1"
-    if /I "!MODEL_NAME!"=="nomic-embed-text:latest" set "HAS_EMBED_MODEL=1"
 )
 
 if "%HAS_CHAT_MODEL%"=="1" (
@@ -129,16 +125,6 @@ if "%HAS_CHAT_MODEL%"=="1" (
     set "HAS_ERRORS=1"
     set "MISSING_ITEMS=!MISSING_ITEMS!Ollama chat model llama3.2|"
     call :notify "Local Cortex setup" "The required chat model llama3.2 is missing."
- )
-
-if "%HAS_EMBED_MODEL%"=="1" (
-    echo   [OK] Embedding model found: nomic-embed-text
- ) else (
-    echo   [MISSING] Embedding model not found: nomic-embed-text
-    echo             Install it with: ollama pull nomic-embed-text
-    set "HAS_ERRORS=1"
-    set "MISSING_ITEMS=!MISSING_ITEMS!Ollama embedding model nomic-embed-text|"
-    call :notify "Local Cortex setup" "The required embedding model nomic-embed-text is missing."
  )
 goto :eof
 

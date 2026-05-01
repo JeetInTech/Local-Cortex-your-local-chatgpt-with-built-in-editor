@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, ChevronDown, Loader2 } from 'lucide-react';
+import { Plus, ChevronDown, Loader2, RefreshCw } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 
 interface DiscoveredModel {
@@ -55,15 +55,37 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Load models on mount so the current model name resolves immediately
+  useEffect(() => {
+    invoke<DiscoveredModel[]>('list_models')
+      .then(setModels)
+      .catch(() => {});
+  }, []);
+
   const loadModels = async () => {
-    if (models.length > 0) { setIsOpen(!isOpen); return; }
+    setIsOpen(prev => !prev);
+    // If we already have models, just toggle — don't re-fetch
+    if (models.length > 0) return;
     setLoading(true);
-    setIsOpen(true);
     try {
       const result = await invoke<DiscoveredModel[]>('list_models');
       setModels(result);
     } catch (e) {
       console.error('Failed to load models:', e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRefresh = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setModels([]);
+    setLoading(true);
+    try {
+      const result = await invoke<DiscoveredModel[]>('list_models');
+      setModels(result);
+    } catch (e) {
+      console.error('Failed to refresh models:', e);
     } finally {
       setLoading(false);
     }
@@ -128,8 +150,8 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
             overflowY: 'auto',
           }}
         >
-          {/* Search inside popover */}
-          <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--modal-border)' }}>
+          {/* Popover header: search + refresh */}
+          <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--modal-border)', display: 'flex', gap: '6px', alignItems: 'center' }}>
             <input
               autoFocus
               placeholder="Search models..."
@@ -137,7 +159,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
               onChange={e => setSearchQuery(e.target.value)}
               onClick={e => e.stopPropagation()}
               style={{
-                width: '100%',
+                flex: 1,
                 background: 'var(--vscode-input)',
                 border: '1px solid var(--vscode-border)',
                 color: 'var(--vscode-text)',
@@ -147,6 +169,24 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
                 borderRadius: '4px',
               }}
             />
+            <button
+              onClick={handleRefresh}
+              title="Refresh model list"
+              disabled={loading}
+              style={{
+                background: 'none',
+                border: 'none',
+                cursor: loading ? 'default' : 'pointer',
+                color: 'var(--vscode-text)',
+                opacity: loading ? 0.4 : 0.7,
+                padding: '2px 4px',
+                display: 'flex',
+                alignItems: 'center',
+                flexShrink: 0,
+              }}
+            >
+              <RefreshCw size={13} className={loading ? 'spin' : ''} />
+            </button>
           </div>
 
           {loading ? (

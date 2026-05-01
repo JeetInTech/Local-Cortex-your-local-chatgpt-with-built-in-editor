@@ -3,7 +3,7 @@ import { MessageSquare, Code2, Settings } from "lucide-react";
 import "./App.css";
 import GptView from "./components/GptView";
 import EditorView from "./components/EditorView";
-import SettingsModal, { AppSettings } from "./components/SettingsModal";
+import SettingsModal, { AppSettings, DEFAULT_SYSTEM_PROMPT } from "./components/SettingsModal";
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
@@ -14,6 +14,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   minimap: true,
   terminalFontSize: 13,
   enabledExtensions: [],
+  systemPrompt: DEFAULT_SYSTEM_PROMPT,
+  ragEnabled: true,
+  numCtx: 8192,
 };
 
 function loadSettings(): AppSettings {
@@ -31,7 +34,7 @@ export interface EditorFile {
 }
 
 function App() {
-  const [currentView, setCurrentView] = useState<'gpt' | 'editor'>('editor');
+  const [currentView, setCurrentView] = useState<'gpt' | 'editor'>('gpt');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
 
@@ -63,7 +66,7 @@ function App() {
       {/* Global Activity Bar */}
       <div className="activity-bar">
         <img
-          src="/logo.png"
+          src="/logo.jpeg"
           alt="Local Cortex Logo"
           style={{ width: '32px', height: '32px', marginBottom: '16px', borderRadius: '6px' }}
         />
@@ -97,6 +100,9 @@ function App() {
           <GptView
             fontSize={settings.fontSize}
             onSendToEditor={sendToEditor}
+            systemPrompt={settings.systemPrompt}
+            ragEnabled={settings.ragEnabled}
+            numCtx={settings.numCtx}
           />
         </div>
         <div style={{ display: currentView === 'editor' ? 'flex' : 'none', flex: 1, width: '100%', height: '100%', overflow: 'hidden' }}>

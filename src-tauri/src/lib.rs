@@ -14,6 +14,7 @@ use std::sync::Arc;
 pub struct AppState {
     pub store:     Arc<rag::VectorStore>,
     pub approvals: agent::ApprovalMap,
+    pub cancellations: agent::CancellationMap,
     // index progress (progress, total)
     pub index_progress: tokio::sync::Mutex<(usize, usize, String)>,
 }
@@ -28,11 +29,19 @@ pub struct ChatMessage {
     pub content: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct OllamaOptions {
+    pub num_ctx: u32,
+    pub temperature: f32,
+    pub top_p: f32,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OllamaRequest {
     model: String,
     messages: Vec<ChatMessage>,
     stream: bool,
+    options: OllamaOptions,
 }
 
 #[derive(Debug, Deserialize)]
@@ -146,14 +155,16 @@ async fn list_models() -> Result<Vec<DiscoveredModel>, String> {
                 } else {
                     "Ollama LLMs".to_string()
                 };
-                models.push(DiscoveredModel {
-                    id: tag.name.clone(),
-                    name: display_name,
-                    category,
-                    model_type,
-                    size: Some(format_size(tag.size)),
-                    source: "ollama".to_string(),
-                });
+                if model_type == "LLM" || model_type == "Code LLM" {
+                    models.push(DiscoveredModel {
+                        id: tag.name.clone(),
+                        name: display_name,
+                        category,
+                        model_type,
+                        size: Some(format_size(tag.size)),
+                        source: "ollama".to_string(),
+                    });
+                }
             }
         }
     }
@@ -174,14 +185,16 @@ async fn list_models() -> Result<Vec<DiscoveredModel>, String> {
                         .replace("--", "/");
                     let display_name = model_id.split('/').last().unwrap_or(&model_id).to_string();
                     let model_type = detect_model_type(&model_id);
-                    models.push(DiscoveredModel {
-                        id: model_id.clone(),
-                        name: display_name,
-                        category: "Hugging Face Models".to_string(),
-                        model_type,
-                        size: None,
-                        source: "huggingface".to_string(),
-                    });
+                    if model_type == "LLM" || model_type == "Code LLM" {
+                        models.push(DiscoveredModel {
+                            id: model_id.clone(),
+                            name: display_name,
+                            category: "Hugging Face Models".to_string(),
+                            model_type,
+                            size: None,
+                            source: "huggingface".to_string(),
+                        });
+                    }
                 }
             }
         }
@@ -200,14 +213,16 @@ async fn list_models() -> Result<Vec<DiscoveredModel>, String> {
                 if ["h5", "keras", "pkl", "pt", "pth"].contains(&ext.as_str()) {
                     let size_bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
                     let model_type = detect_model_type(&fname);
-                    models.push(DiscoveredModel {
-                        id: fname.clone(),
-                        name: fname.clone(),
-                        category: "Keras Models".to_string(),
-                        model_type,
-                        size: Some(format_size(size_bytes)),
-                        source: "keras".to_string(),
-                    });
+                    if model_type == "LLM" || model_type == "Code LLM" {
+                        models.push(DiscoveredModel {
+                            id: fname.clone(),
+                            name: fname.clone(),
+                            category: "Keras Models".to_string(),
+                            model_type,
+                            size: Some(format_size(size_bytes)),
+                            source: "keras".to_string(),
+                        });
+                    }
                 }
             }
         }
@@ -293,12 +308,32 @@ async fn generate_response(
     stream_id: String,
     model: String,
     messages: Vec<ChatMessage>,
+    system_prompt: Option<String>,
+    num_ctx: Option<u32>,
 ) -> Result<(), String> {
+    // Prepend system message if one is provided
+    let mut final_messages: Vec<ChatMessage> = Vec::new();
+    if let Some(sp) = system_prompt {
+        let trimmed = sp.trim().to_string();
+        if !trimmed.is_empty() {
+            final_messages.push(ChatMessage {
+                role: "system".to_string(),
+                content: trimmed,
+            });
+        }
+    }
+    final_messages.extend(messages);
+
     let client = reqwest::Client::new();
     let req_body = OllamaRequest {
         model,
-        messages,
+        messages: final_messages,
         stream: true,
+        options: OllamaOptions {
+            num_ctx: num_ctx.unwrap_or(8192),
+            temperature: 0.7,
+            top_p: 0.9,
+        },
     };
 
     let res = client
@@ -343,6 +378,26 @@ pub struct ChatSession {
     pub messages: Vec<ChatMessage>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AgentHistoryMessage {
+    pub id: String,
+    pub role: String,
+    pub content: String,
+    pub created_at: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AgentHistorySession {
+    pub id: String,
+    pub title: String,
+    pub created_at: u64,
+    pub updated_at: u64,
+    pub keep_forever: bool,
+    pub model: String,
+    pub workspace: Option<String>,
+    pub messages: Vec<AgentHistoryMessage>,
+}
+
 fn history_file(app: &tauri::AppHandle) -> PathBuf {
     let base = app.path().app_data_dir()
         .unwrap_or_else(|_| PathBuf::from("."));
@@ -350,10 +405,42 @@ fn history_file(app: &tauri::AppHandle) -> PathBuf {
     base.join("chat_history.json")
 }
 
+fn agent_history_file(app: &tauri::AppHandle) -> PathBuf {
+    let base = app.path().app_data_dir()
+        .unwrap_or_else(|_| PathBuf::from("."));
+    std::fs::create_dir_all(&base).ok();
+    base.join("agent_history.json")
+}
+
+fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn prune_chat_sessions(mut sessions: Vec<ChatSession>) -> Vec<ChatSession> {
+    const THIRTY_DAYS_MS: u64 = 30 * 24 * 60 * 60 * 1000;
+    let cutoff = now_unix_ms().saturating_sub(THIRTY_DAYS_MS);
+    // created_at is in ms — keep sessions updated within the last 30 days
+    sessions.retain(|s| s.created_at >= cutoff);
+    sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    sessions
+}
+
+fn prune_agent_sessions(mut sessions: Vec<AgentHistorySession>) -> Vec<AgentHistorySession> {
+    const THIRTY_DAYS_MS: u64 = 30 * 24 * 60 * 60 * 1000;
+    let cutoff = now_unix_ms().saturating_sub(THIRTY_DAYS_MS);
+    sessions.retain(|session| session.keep_forever || session.updated_at >= cutoff);
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    sessions
+}
+
 #[tauri::command]
 fn save_chat_history(app: tauri::AppHandle, sessions: Vec<ChatSession>) -> Result<(), String> {
     let path = history_file(&app);
-    let json = serde_json::to_string_pretty(&sessions).map_err(|e| e.to_string())?;
+    let pruned = prune_chat_sessions(sessions);
+    let json = serde_json::to_string_pretty(&pruned).map_err(|e| e.to_string())?;
     std::fs::write(path, json).map_err(|e| e.to_string())
 }
 
@@ -361,8 +448,32 @@ fn save_chat_history(app: tauri::AppHandle, sessions: Vec<ChatSession>) -> Resul
 fn load_chat_history(app: tauri::AppHandle) -> Result<Vec<ChatSession>, String> {
     let path = history_file(&app);
     if !path.exists() { return Ok(vec![]); }
-    let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-    serde_json::from_str(&raw).map_err(|e| e.to_string())
+    let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let parsed: Vec<ChatSession> = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+    let pruned = prune_chat_sessions(parsed);
+    let json = serde_json::to_string_pretty(&pruned).map_err(|e| e.to_string())?;
+    std::fs::write(path, json).map_err(|e| e.to_string())?;
+    Ok(pruned)
+}
+
+#[tauri::command]
+fn save_agent_history(app: tauri::AppHandle, sessions: Vec<AgentHistorySession>) -> Result<(), String> {
+    let path = agent_history_file(&app);
+    let pruned = prune_agent_sessions(sessions);
+    let json = serde_json::to_string_pretty(&pruned).map_err(|e| e.to_string())?;
+    std::fs::write(path, json).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn load_agent_history(app: tauri::AppHandle) -> Result<Vec<AgentHistorySession>, String> {
+    let path = agent_history_file(&app);
+    if !path.exists() { return Ok(vec![]); }
+    let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let parsed: Vec<AgentHistorySession> = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+    let pruned = prune_agent_sessions(parsed);
+    let json = serde_json::to_string_pretty(&pruned).map_err(|e| e.to_string())?;
+    std::fs::write(path, json).map_err(|e| e.to_string())?;
+    Ok(pruned)
 }
 
 // ─────────────────────────────────────────────
@@ -544,12 +655,26 @@ async fn start_agent(
     task: String,
     workspace: String,
     model: String,
+    context_messages: Vec<ChatMessage>,
 ) -> Result<(), String> {
     let store     = state.store.clone();
     let approvals = state.approvals.clone();
+    let cancellations = state.cancellations.clone();
+    let cancel_token = agent::register_cancellation(&cancellations, &id).await;
 
     tokio::spawn(async move {
-        agent::run_agent(window, id, task, workspace, model, store, approvals).await;
+        agent::run_agent(
+            window,
+            id,
+            task,
+            workspace,
+            model,
+            context_messages,
+            store,
+            approvals,
+            cancel_token,
+            cancellations,
+        ).await;
     });
 
     Ok(())
@@ -567,6 +692,14 @@ async fn agent_approve(
 ) -> Result<(), String> {
     agent::resolve_approval(&state.approvals, &action_id, approved).await;
     Ok(())
+}
+
+#[tauri::command]
+async fn cancel_agent(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<bool, String> {
+    Ok(agent::cancel_task(&state.cancellations, &id).await)
 }
 
 // ─────────────────────────────────────────────
@@ -778,6 +911,7 @@ fn replace_in_file(
 pub fn run() {
     let store     = rag::VectorStore::new();
     let approvals = agent::new_approval_map();
+    let cancellations = agent::new_cancellation_map();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -786,6 +920,7 @@ pub fn run() {
         .manage(AppState {
             store,
             approvals,
+            cancellations,
             index_progress: tokio::sync::Mutex::new((0, 0, "idle".into())),
         })
         .invoke_handler(tauri::generate_handler![
@@ -797,6 +932,8 @@ pub fn run() {
             get_temp_dir,
             save_chat_history,
             load_chat_history,
+            save_agent_history,
+            load_agent_history,
             save_recent_files,
             load_recent_files,
             run_terminal_command,
@@ -805,6 +942,7 @@ pub fn run() {
             rag_search,
             start_agent,
             agent_approve,
+            cancel_agent,
             get_index_status,
             // ── Git ──
             get_git_branch,

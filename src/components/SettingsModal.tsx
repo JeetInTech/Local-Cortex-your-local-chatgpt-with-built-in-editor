@@ -1,6 +1,16 @@
 import React from 'react';
 import { X, Moon, Sun, Minus, Plus } from 'lucide-react';
 
+export const DEFAULT_SYSTEM_PROMPT = `You are a brilliant, direct AI assistant. Follow these rules absolutely:
+
+1. Answer the actual question immediately. No preamble, no throat-clearing.
+2. Format ALL code with markdown code blocks and the correct language tag (e.g. \`\`\`typescript).
+3. Use headers and bullets only when structure genuinely helps — not by default.
+4. When code snippets are provided between [WORKSPACE CONTEXT] tags, use them to give accurate, project-specific answers.
+5. Never open with "Certainly!", "Of course!", "Great question!" or any filler phrase.
+6. If you don't know something, say so directly. Never fabricate APIs, functions, or facts.
+7. Keep answers tight. If the question is simple, the answer should be short.`;
+
 export interface AppSettings {
   theme: 'dark' | 'light' | 'bearded' | 'github-dark';
   fontSize: number;
@@ -10,6 +20,9 @@ export interface AppSettings {
   minimap: boolean;
   terminalFontSize: number;
   enabledExtensions: string[];
+  systemPrompt: string;
+  ragEnabled: boolean;
+  numCtx: number;
 }
 
 interface SettingsModalProps {
@@ -138,7 +151,66 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
           <Stepper value={settings.terminalFontSize} min={10} max={20} unit="px" onChange={v => set('terminalFontSize', v)} />
         </Row>
 
-        {/* ── Info ────────────────────────────────────────────────── */}
+        {/* ── Chat AI ─────────────────────────────────────────── */}
+        <div style={{ fontSize: '11px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px', opacity: 0.5, marginBottom: '16px', marginTop: '8px' }}>
+          Chat AI
+        </div>
+
+        <Row label="RAG Context" desc="Inject relevant workspace code into every chat reply">
+          <Toggle value={settings.ragEnabled} onChange={v => set('ragEnabled', v)} />
+        </Row>
+
+        <Row label="Context Window" desc="Tokens the model can hold in memory (larger = more context, slower)">
+          <div style={{ display: 'flex', gap: '6px' }}>
+            {([2048, 4096, 8192] as const).map(n => (
+              <button
+                key={n}
+                className="theme-toggle"
+                onClick={() => set('numCtx', n)}
+                style={{ border: settings.numCtx === n ? '1px solid var(--vscode-accent)' : undefined }}
+              >
+                {n === 2048 ? '2K' : n === 4096 ? '4K' : '8K'}
+              </button>
+            ))}
+          </div>
+        </Row>
+
+        <div style={{ marginBottom: '8px' }}>
+          <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>System Prompt</div>
+          <div style={{ fontSize: '11px', opacity: 0.5, marginBottom: '8px' }}>The hidden instruction injected before every chat message. Defines the AI's personality and rules.</div>
+          <textarea
+            value={settings.systemPrompt}
+            onChange={e => set('systemPrompt', e.target.value)}
+            rows={8}
+            style={{
+              width: '100%',
+              background: 'var(--vscode-input)',
+              border: '1px solid var(--vscode-border)',
+              color: 'var(--vscode-text)',
+              padding: '8px 10px',
+              fontSize: '12px',
+              fontFamily: "'Cascadia Code', monospace",
+              lineHeight: 1.6,
+              borderRadius: '4px',
+              resize: 'vertical',
+              outline: 'none',
+              boxSizing: 'border-box',
+            }}
+          />
+          <button
+            onClick={() => set('systemPrompt', DEFAULT_SYSTEM_PROMPT)}
+            style={{
+              marginTop: '6px', fontSize: '11px', opacity: 0.6,
+              background: 'none', border: '1px solid var(--vscode-border)',
+              color: 'var(--vscode-text)', padding: '3px 10px',
+              borderRadius: '4px', cursor: 'pointer',
+            }}
+          >
+            Reset to default
+          </button>
+        </div>
+
+        {/* ── Info ──────────────────────────────────────────────── */}
         <div style={{ marginTop: '24px', padding: '12px', background: 'rgba(0,122,204,0.08)', borderRadius: '6px', fontSize: '12px', color: 'var(--vscode-text)', opacity: 0.7, lineHeight: 1.6 }}>
           <strong>Local Cortex</strong> — v0.1.0<br />
           All AI inference runs locally on your hardware. No data leaves your machine.

@@ -22,8 +22,6 @@ To run the packaged Local Cortex app as an end user, the minimum requirements ar
 4. Ollama running locally on `http://127.0.0.1:11434`
 5. A chat model installed in Ollama:
    - recommended: `llama3.2`
-6. The embedding model used by this app's indexing feature:
-   - required for RAG/indexing: `nomic-embed-text`
 
 ### Optional but useful inside the app
 
@@ -62,13 +60,11 @@ From reading the codebase, these are the important runtime assumptions:
 - Installed Ollama models are read from `http://127.0.0.1:11434/api/tags`
 - RAG embeddings are requested from `http://127.0.0.1:11434/api/embeddings`
 - The default chat model in the UI is `llama3.2:latest`
-- The embedding model in Rust is hardcoded to `nomic-embed-text`
 
 That means:
 
 - if Ollama is missing, the app can open but AI features will fail
 - if `llama3.2` is missing, the default chat flow will not work until the user picks another installed model
-- if `nomic-embed-text` is missing, indexing and retrieval will fail
 
 ## End-User Installation Guide
 
@@ -92,12 +88,6 @@ Install the default chat model:
 
 ```powershell
 ollama pull llama3.2
-```
-
-Install the embedding model used by Local Cortex indexing:
-
-```powershell
-ollama pull nomic-embed-text
 ```
 
 You can verify installed models with:
@@ -141,7 +131,6 @@ Run it before launching the app. It will:
 - check whether Ollama is installed
 - check whether Ollama is reachable
 - check whether `llama3.2` is installed
-- check whether `nomic-embed-text` is installed
 - report optional tools like Git and Python
 - offer to open download/install links when something is missing
 
@@ -246,7 +235,6 @@ When you hand this app to another person, give them these three things:
 
 ```powershell
 ollama pull llama3.2
-ollama pull nomic-embed-text
 ```
 
 ## Runtime Notes
