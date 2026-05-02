@@ -907,6 +907,20 @@ fn replace_in_file(
 }
 
 // ─────────────────────────────────────────────
+// OLLAMA HEALTH CHECK (native TCP — no CORS)
+// ─────────────────────────────────────────────
+
+#[tauri::command]
+fn check_ollama() -> bool {
+    use std::net::TcpStream;
+    use std::time::Duration;
+    TcpStream::connect_timeout(
+        &"127.0.0.1:11434".parse().unwrap(),
+        Duration::from_secs(3),
+    ).is_ok()
+}
+
+// ─────────────────────────────────────────────
 // APP ENTRY
 // ─────────────────────────────────────────────
 
@@ -957,6 +971,7 @@ pub fn run() {
             // ── Search ──
             search_in_files,
             replace_in_file,
+            check_ollama,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

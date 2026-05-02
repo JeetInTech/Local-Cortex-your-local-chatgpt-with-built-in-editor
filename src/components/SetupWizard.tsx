@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { AlertCircle, CheckCircle2, ChevronRight, Play, RefreshCw, ExternalLink, Download, Loader2 } from "lucide-react";
 import { openUrl } from '@tauri-apps/plugin-opener';
+import { invoke } from '@tauri-apps/api/core';
 
 export interface SetupWizardProps {
   onComplete: () => void;
@@ -34,17 +35,19 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
 
   const checkOllama = async () => {
     setStep('CHECKING');
-    const hosts = ['http://127.0.0.1:11434', 'http://localhost:11434'];
-    for (const host of hosts) {
+    try {
+      // Use native Rust TCP probe — bypasses WebView2 CORS entirely
+      const isUp: boolean = await invoke('check_ollama');
+      setStep(isUp ? 'SELECT_MODELS' : 'MISSING_OLLAMA');
+    } catch {
+      // Fallback for browser dev mode (no Tauri context)
       try {
-        // Use no-cors so WebView2/browser CORS doesn't block the probe.
-        // An opaque (no-cors) response still means the server responded — Ollama is up.
-        await fetch(`${host}/api/tags`, { mode: 'no-cors', signal: AbortSignal.timeout(3000) });
+        await fetch('http://127.0.0.1:11434/api/tags', { mode: 'no-cors', signal: AbortSignal.timeout(3000) });
         setStep('SELECT_MODELS');
-        return;
-      } catch { /* try next */ }
+      } catch {
+        setStep('MISSING_OLLAMA');
+      }
     }
-    setStep('MISSING_OLLAMA');
   };
 
   useEffect(() => { checkOllama(); }, []);
