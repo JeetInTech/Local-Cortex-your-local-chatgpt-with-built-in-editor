@@ -126,6 +126,13 @@ if "%HAS_CHAT_MODEL%"=="1" (
     set "MISSING_ITEMS=!MISSING_ITEMS!Ollama chat model llama3.2|"
     call :notify "Local Cortex setup" "The required chat model llama3.2 is missing."
  )
+
+echo.
+echo   [INFO] Other recommended ^(but OPTIONAL^) models:
+echo          - llama3.1:8b ^(Heavy coding tasks^)
+echo          - mistral-nemo ^(Large context^)
+echo          - phi3 ^(Fast response^)
+echo          Install them via e.g. "ollama pull phi3"
 goto :eof
 
 :check_optional_tools
@@ -202,9 +209,10 @@ if defined OPTIONAL_ITEMS (
 
 echo.
 if "%SILENT%"=="1" goto :finish
-choice /C YN /N /M "Open README now? [Y/N]: "
+choice /C YN /N /M "Open Creator's GitHub and LinkedIn now? [Y/N]: "
 if errorlevel 2 goto :finish
-if exist "%~dp0README.md" start "" "%~dp0README.md"
+start "" "https://github.com/JeetInTech"
+start "" "https://www.linkedin.com/in/sangramjeetghosh/"
 
 :finish
 echo.

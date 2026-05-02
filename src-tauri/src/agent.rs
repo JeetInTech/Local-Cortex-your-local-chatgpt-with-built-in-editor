@@ -555,6 +555,7 @@ pub async fn run_agent(
             "model": model,
             "messages": messages,
             "stream": false,
+            "keep_alive": -1,
         });
 
         let response = match client

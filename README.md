@@ -90,7 +90,18 @@ Install the default chat model:
 ollama pull llama3.2
 ```
 
-You can verify installed models with:
+*(Note: `llama3.2` is the only **required** model for the app to function properly out of the box).*
+
+#### Optional: Additional Recommended Models
+
+You can install other models depending on your needs. They are **strictly optional** but highly recommended for better performance or specific use cases:
+
+- **`llama3.1:8b`**: Best for heavy-duty coding & Agent tasks. (Run `ollama pull llama3.1:8b`)
+- **`mistral-nemo`**: Best for large codebases & complex logic, massive context window. (Run `ollama pull mistral-nemo`)
+- **`phi3`**: Extremely fast, snappy questions and logic. Great for lower-end hardware. (Run `ollama pull phi3`)
+- **`dolphin-llama3`**: Completely uncensored, unfiltered tasks without guardrails. (Run `ollama pull dolphin-llama3`)
+
+You can verify your installed models at any time with:
 
 ```powershell
 ollama ls

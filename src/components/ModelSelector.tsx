@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, ChevronDown, Loader2, RefreshCw } from 'lucide-react';
+import { Plus, ChevronDown, Loader2, RefreshCw, Info, X } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 
 interface DiscoveredModel {
@@ -40,6 +40,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   direction = 'down',
 }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const [showInfoModal, setShowInfoModal] = useState(false);
   const [models, setModels] = useState<DiscoveredModel[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -117,137 +118,180 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   const displayName = currentModelObj?.name ?? currentModel;
 
   return (
-    <div style={{ position: 'relative' }} ref={ref}>
-      <div
-        className="model-selector-btn"
-        onClick={loadModels}
-        title="Select Model"
-      >
-        {iconOnly ? (
-          loading ? <Loader2 size={16} className="spin" /> : <Plus size={16} />
-        ) : (
-          <>
-            <span style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {displayName}
-            </span>
-            {loading ? <Loader2 size={14} className="spin" /> : <ChevronDown size={14} />}
-          </>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+      <div style={{ position: 'relative' }} ref={ref}>
+        <div
+          className="model-selector-btn"
+          onClick={loadModels}
+          title="Select Model"
+        >
+          {iconOnly ? (
+            loading ? <Loader2 size={16} className="spin" /> : <Plus size={16} />
+          ) : (
+            <>
+              <span style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {displayName}
+              </span>
+              {loading ? <Loader2 size={14} className="spin" /> : <ChevronDown size={14} />}
+            </>
+          )}
+        </div>
+
+        {isOpen && (
+          <div
+            className="popover-container"
+            style={{
+              top: direction === 'down' ? '100%' : 'auto',
+              bottom: direction === 'up' ? '100%' : 'auto',
+              right: iconOnly ? 0 : 'auto',
+              left: iconOnly ? 'auto' : 0,
+              marginTop: direction === 'down' ? '4px' : 0,
+              marginBottom: direction === 'up' ? '4px' : 0,
+              width: '280px',
+              maxHeight: '400px',
+              overflowY: 'auto',
+            }}
+          >
+            {/* Popover header: search + refresh */}
+            <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--modal-border)', display: 'flex', gap: '6px', alignItems: 'center' }}>
+              <input
+                autoFocus
+                placeholder="Search models..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                onClick={e => e.stopPropagation()}
+                style={{
+                  flex: 1,
+                  background: 'var(--vscode-input)',
+                  border: '1px solid var(--vscode-border)',
+                  color: 'var(--vscode-text)',
+                  padding: '4px 8px',
+                  fontSize: '12px',
+                  outline: 'none',
+                  borderRadius: '4px',
+                }}
+              />
+              <button
+                onClick={handleRefresh}
+                title="Refresh model list"
+                disabled={loading}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  cursor: loading ? 'default' : 'pointer',
+                  color: 'var(--vscode-text)',
+                  opacity: loading ? 0.4 : 0.7,
+                  padding: '2px 4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  flexShrink: 0,
+                }}
+              >
+                <RefreshCw size={13} className={loading ? 'spin' : ''} />
+              </button>
+            </div>
+
+            {loading ? (
+              <div style={{ padding: '16px', textAlign: 'center', color: 'var(--vscode-text)', opacity: 0.6, fontSize: '13px' }}>
+                Scanning installed models...
+              </div>
+            ) : Object.keys(grouped).length === 0 ? (
+              <div style={{ padding: '16px', textAlign: 'center', color: 'var(--vscode-text)', opacity: 0.6, fontSize: '13px' }}>
+                No models found. Is Ollama running?
+              </div>
+            ) : (
+              Object.entries(grouped).map(([category, items]) => (
+                <div key={category}>
+                  <div style={{
+                    padding: '8px 12px 4px',
+                    fontSize: '10px',
+                    fontWeight: 'bold',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.8px',
+                    color: 'var(--vscode-text)',
+                    opacity: 0.5,
+                    borderTop: '1px solid var(--modal-border)',
+                  }}>
+                    {category}
+                  </div>
+                  {items.map(model => (
+                    <div
+                      key={model.id}
+                      className="popover-item"
+                      onClick={() => { onSelect(model.id); setIsOpen(false); }}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        fontWeight: currentModel === model.id ? 'bold' : 'normal',
+                        whiteSpace: 'nowrap',
+                        gap: '8px',
+                      }}
+                    >
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', flex: 1 }}>
+                        {currentModel === model.id ? '✓ ' : ''}{model.name}
+                      </span>
+                      <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+                        <span style={{
+                          fontSize: '10px',
+                          padding: '1px 5px',
+                          borderRadius: '3px',
+                          background: SOURCE_COLORS[model.source] ?? '#555',
+                          color: '#fff',
+                        }}>
+                          {model.model_type}
+                        </span>
+                        {model.size && (
+                          <span style={{ fontSize: '10px', opacity: 0.6 }}>{model.size}</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))
+            )}
+          </div>
         )}
       </div>
 
-      {isOpen && (
-        <div
-          className="popover-container"
-          style={{
-            top: direction === 'down' ? '100%' : 'auto',
-            bottom: direction === 'up' ? '100%' : 'auto',
-            right: iconOnly ? 0 : 'auto',
-            left: iconOnly ? 'auto' : 0,
-            marginTop: direction === 'down' ? '4px' : 0,
-            marginBottom: direction === 'up' ? '4px' : 0,
-            width: '280px',
-            maxHeight: '400px',
-            overflowY: 'auto',
-          }}
+      {!iconOnly && (
+        <button
+          onClick={() => setShowInfoModal(true)}
+          style={{ background: 'none', border: 'none', color: 'var(--vscode-text)', opacity: 0.5, cursor: 'pointer', padding: '4px', display: 'flex' }}
+          title="Model Recommendations Info"
         >
-          {/* Popover header: search + refresh */}
-          <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--modal-border)', display: 'flex', gap: '6px', alignItems: 'center' }}>
-            <input
-              autoFocus
-              placeholder="Search models..."
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              onClick={e => e.stopPropagation()}
-              style={{
-                flex: 1,
-                background: 'var(--vscode-input)',
-                border: '1px solid var(--vscode-border)',
-                color: 'var(--vscode-text)',
-                padding: '4px 8px',
-                fontSize: '12px',
-                outline: 'none',
-                borderRadius: '4px',
-              }}
-            />
-            <button
-              onClick={handleRefresh}
-              title="Refresh model list"
-              disabled={loading}
-              style={{
-                background: 'none',
-                border: 'none',
-                cursor: loading ? 'default' : 'pointer',
-                color: 'var(--vscode-text)',
-                opacity: loading ? 0.4 : 0.7,
-                padding: '2px 4px',
-                display: 'flex',
-                alignItems: 'center',
-                flexShrink: 0,
-              }}
-            >
-              <RefreshCw size={13} className={loading ? 'spin' : ''} />
-            </button>
-          </div>
+          <Info size={14} />
+        </button>
+      )}
 
-          {loading ? (
-            <div style={{ padding: '16px', textAlign: 'center', color: 'var(--vscode-text)', opacity: 0.6, fontSize: '13px' }}>
-              Scanning installed models...
+      {showInfoModal && (
+        <div className="modal-overlay" onClick={() => setShowInfoModal(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ width: '400px', maxHeight: '80vh', overflowY: 'auto' }}>
+            <div className="modal-header">
+              <span>Model Guidance</span>
+              <X size={20} cursor="pointer" onClick={() => setShowInfoModal(false)} />
             </div>
-          ) : Object.keys(grouped).length === 0 ? (
-            <div style={{ padding: '16px', textAlign: 'center', color: 'var(--vscode-text)', opacity: 0.6, fontSize: '13px' }}>
-              No models found. Is Ollama running?
+            <div style={{ padding: '0 4px', fontSize: '13px', lineHeight: 1.5, color: 'var(--vscode-text)', opacity: 0.9 }}>
+              <h4 style={{ margin: '0 0 8px', color: 'var(--vscode-accent)' }}>Primary Workhorses</h4>
+              <ul style={{ margin: '0 0 16px', paddingLeft: '20px' }}>
+                <li style={{ marginBottom: '6px' }}><strong>llama3.1:8b</strong>: Best for heavy-duty coding & Agent tasks.</li>
+                <li><strong>mistral-nemo</strong>: Best for large codebases & complex logic (massive context).</li>
+              </ul>
+              
+              <h4 style={{ margin: '0 0 8px', color: 'var(--vscode-accent)' }}>Speed & Lightweight</h4>
+              <ul style={{ margin: '0 0 16px', paddingLeft: '20px' }}>
+                <li style={{ marginBottom: '6px' }}><strong>phi3</strong>: Snappy, fast coding questions. Great for lower-end hardware.</li>
+                <li style={{ marginBottom: '6px' }}><strong>llama3.2:latest</strong>: Best default "fast" assistant (3B).</li>
+                <li><strong>llama3.2:1b</strong>: Ultra-fast, simple tasks with almost no RAM usage.</li>
+              </ul>
+              
+              <h4 style={{ margin: '0 0 8px', color: 'var(--vscode-accent)' }}>Specialty</h4>
+              <ul style={{ margin: '0 0 16px', paddingLeft: '20px' }}>
+                <li style={{ marginBottom: '6px' }}><strong>dolphin-llama3</strong>: Completely uncensored, unfiltered tasks without guardrails.</li>
+                <li><strong>nomic-embed-text</strong>: Not a chat model! Used automatically for RAG indexing.</li>
+              </ul>
             </div>
-          ) : (
-            Object.entries(grouped).map(([category, items]) => (
-              <div key={category}>
-                <div style={{
-                  padding: '8px 12px 4px',
-                  fontSize: '10px',
-                  fontWeight: 'bold',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.8px',
-                  color: 'var(--vscode-text)',
-                  opacity: 0.5,
-                  borderTop: '1px solid var(--modal-border)',
-                }}>
-                  {category}
-                </div>
-                {items.map(model => (
-                  <div
-                    key={model.id}
-                    className="popover-item"
-                    onClick={() => { onSelect(model.id); setIsOpen(false); }}
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      fontWeight: currentModel === model.id ? 'bold' : 'normal',
-                      whiteSpace: 'nowrap',
-                      gap: '8px',
-                    }}
-                  >
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', flex: 1 }}>
-                      {currentModel === model.id ? '✓ ' : ''}{model.name}
-                    </span>
-                    <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
-                      <span style={{
-                        fontSize: '10px',
-                        padding: '1px 5px',
-                        borderRadius: '3px',
-                        background: SOURCE_COLORS[model.source] ?? '#555',
-                        color: '#fff',
-                      }}>
-                        {model.model_type}
-                      </span>
-                      {model.size && (
-                        <span style={{ fontSize: '10px', opacity: 0.6 }}>{model.size}</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ))
-          )}
+          </div>
         </div>
       )}
     </div>

@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Plus, Send, Bot, Search, Trash2, MessageSquare,
   Copy, Check, Download, RotateCcw, StopCircle,
-  Brain, X, Pencil, Sparkles,
+  Brain, X, Pencil, Sparkles, Bug, BookOpen, Zap, Blocks
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { invoke } from '@tauri-apps/api/core';
@@ -21,12 +21,12 @@ const RAG_SCORE_MIN     = 0.25;
 const RAG_TOP_K         = 5;
 
 const SUGGESTED = [
-  { icon: '🔍', label: 'Explain codebase',    prompt: 'Explain how this codebase is structured and what the main components do.' },
-  { icon: '✨', label: 'Write a function',    prompt: 'Write a TypeScript function that ' },
-  { icon: '🐛', label: 'Debug an error',      prompt: 'Help me debug this error:\n\n```\n\n```' },
-  { icon: '📚', label: 'Explain a concept',   prompt: 'Explain the concept of ' },
-  { icon: '⚡', label: 'Optimize code',        prompt: 'How can I optimize this code?\n\n```\n\n```' },
-  { icon: '🏗️', label: 'Design architecture', prompt: "What's the best architecture for " },
+  { icon: <Search size={22} strokeWidth={1.5} style={{ color: '#3b82f6' }} />, label: 'Explain codebase',    prompt: 'Explain how this codebase is structured and what the main components do.' },
+  { icon: <Sparkles size={22} strokeWidth={1.5} style={{ color: '#f59e0b' }} />, label: 'Write a function',    prompt: 'Write a TypeScript function that ' },
+  { icon: <Bug size={22} strokeWidth={1.5} style={{ color: '#10b981' }} />, label: 'Debug an error',      prompt: 'Help me debug this error:\n\n```\n\n```' },
+  { icon: <BookOpen size={22} strokeWidth={1.5} style={{ color: '#d946ef' }} />, label: 'Explain a concept',   prompt: 'Explain the concept of ' },
+  { icon: <Zap size={22} strokeWidth={1.5} style={{ color: '#eab308' }} />, label: 'Optimize code',        prompt: 'How can I optimize this code?\n\n```\n\n```' },
+  { icon: <Blocks size={22} strokeWidth={1.5} style={{ color: '#ef4444' }} />, label: 'Design architecture', prompt: "What's the best architecture for " },
 ];
 
 // ─── Types ────────────────────────────────────────────────────────────────────

@@ -29,3 +29,6 @@ dist-ssr
 
 # Tauri build output (redundant with src-tauri/.gitignore, kept here for safety)
 /src-tauri/target/
+
+/local cortex v1.0
+/local cortex v1.0.zip

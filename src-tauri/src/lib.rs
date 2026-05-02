@@ -42,6 +42,8 @@ pub struct OllamaRequest {
     messages: Vec<ChatMessage>,
     stream: bool,
     options: OllamaOptions,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    keep_alive: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -334,6 +336,7 @@ async fn generate_response(
             temperature: 0.7,
             top_p: 0.9,
         },
+        keep_alive: Some(-1),
     };
 
     let res = client
