@@ -4,6 +4,7 @@ import "./App.css";
 import GptView from "./components/GptView";
 import EditorView from "./components/EditorView";
 import SettingsModal, { AppSettings, DEFAULT_SYSTEM_PROMPT } from "./components/SettingsModal";
+import SetupWizard from "./components/SetupWizard";
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
@@ -37,6 +38,9 @@ function App() {
   const [currentView, setCurrentView] = useState<'gpt' | 'editor'>('gpt');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
+  const [setupComplete, setSetupComplete] = useState<boolean>(() => {
+    return localStorage.getItem('localcortex-setup-done') === 'true';
+  });
 
   // ── GPT → Editor bridge ──────────────────────────────────────────────────
   // GptView calls sendToEditor(file) → App queues it → EditorView consumes it
@@ -62,7 +66,16 @@ function App() {
   }, [settings.theme]);
 
   return (
-    <div className="app-container">
+    <>
+      {!setupComplete && (
+        <SetupWizard onComplete={() => {
+          localStorage.setItem('localcortex-setup-done', 'true');
+          setSetupComplete(true);
+        }} />
+      )}
+      
+      {setupComplete && (
+        <div className="app-container">
       {/* Global Activity Bar */}
       <div className="activity-bar">
         <img
@@ -122,6 +135,8 @@ function App() {
         setSettings={setSettings}
       />
     </div>
+    )}
+    </>
   );
 }
 
