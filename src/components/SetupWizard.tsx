@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { AlertCircle, CheckCircle2, ChevronRight, Play, RefreshCw, ExternalLink, Download, Loader2 } from "lucide-react";
-import { open } from '@tauri-apps/plugin-shell';
+import { openUrl } from '@tauri-apps/plugin-opener';
 
 export interface SetupWizardProps {
   onComplete: () => void;
@@ -34,16 +34,17 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
 
   const checkOllama = async () => {
     setStep('CHECKING');
-    try {
-      const res = await fetch(`${OLLAMA_URL}/api/tags`);
-      if (res.ok) {
+    const hosts = ['http://127.0.0.1:11434', 'http://localhost:11434'];
+    for (const host of hosts) {
+      try {
+        // Use no-cors so WebView2/browser CORS doesn't block the probe.
+        // An opaque (no-cors) response still means the server responded — Ollama is up.
+        await fetch(`${host}/api/tags`, { mode: 'no-cors', signal: AbortSignal.timeout(3000) });
         setStep('SELECT_MODELS');
-      } else {
-        setStep('MISSING_OLLAMA');
-      }
-    } catch {
-      setStep('MISSING_OLLAMA');
+        return;
+      } catch { /* try next */ }
     }
+    setStep('MISSING_OLLAMA');
   };
 
   useEffect(() => { checkOllama(); }, []);
@@ -94,8 +95,8 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
   const toggle = (id: string) =>
     setSelectedOptional(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
 
-  const openUrl = async (url: string) => {
-    try { await open(url); } catch { window.open(url, '_blank'); }
+  const openExternalUrl = async (url: string) => {
+    try { await openUrl(url); } catch { window.open(url, '_blank'); }
   };
 
   const totalSelected = COMPULSORY_MODELS.length + selectedOptional.length;
@@ -192,7 +193,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
-                <button style={btnPrimary} onClick={() => openUrl('https://ollama.com/download')}>
+                <button style={btnPrimary} onClick={() => openExternalUrl('https://ollama.com/download')}>
                   <ExternalLink size={12} /> Download Ollama
                 </button>
                 <button style={btnGhost} onClick={checkOllama}>
@@ -313,11 +314,11 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                 </button>
                 <div style={{ display: 'flex', gap: 6, marginTop: 2 }}>
                   <button style={{ ...btnGhost, flex: 1, justifyContent: 'center' }}
-                    onClick={() => openUrl('https://github.com/JeetInTech/Local-Cortex-your-local-chatgpt-with-built-in-editor')}>
+                    onClick={() => openExternalUrl('https://github.com/JeetInTech/Local-Cortex-your-local-chatgpt-with-built-in-editor')}>
                     <ExternalLink size={11} /> Open Source on GitHub
                   </button>
                   <button style={{ ...btnGhost, flex: 1, justifyContent: 'center' }}
-                    onClick={() => openUrl('https://www.linkedin.com/in/jeet-bhatia/')}>
+                    onClick={() => openExternalUrl('https://www.linkedin.com/in/jeet-bhatia/')}>
                     <ExternalLink size={11} /> Connect on LinkedIn
                   </button>
                 </div>
