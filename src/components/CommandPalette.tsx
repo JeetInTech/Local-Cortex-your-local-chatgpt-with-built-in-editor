@@ -182,7 +182,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
                         display: 'flex', alignItems: 'center', gap: '12px',
                         padding: '8px 16px', cursor: 'pointer',
                         background: isSelected ? 'var(--vscode-accent)' : 'transparent',
-                        color: isSelected ? '#fff' : 'var(--vscode-text)',
+                        color: isSelected ? 'var(--btn-text)' : 'var(--vscode-text)',
                         transition: 'background 0.1s',
                       }}
                     >

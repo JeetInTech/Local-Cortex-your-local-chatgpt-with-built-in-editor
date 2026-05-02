@@ -292,7 +292,7 @@ function GitBtn({ children, onClick, title, disabled }: {
         opacity: disabled ? 0.3 : 0.7, padding: '3px', borderRadius: '4px',
         display: 'flex', alignItems: 'center', transition: 'all 0.15s',
       }}
-      onMouseEnter={e => { if (!disabled) { (e.currentTarget as HTMLElement).style.opacity = '1'; (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.1)'; } }}
+      onMouseEnter={e => { if (!disabled) { (e.currentTarget as HTMLElement).style.opacity = '1'; (e.currentTarget as HTMLElement).style.background = 'var(--vscode-input)'; } }}
       onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = disabled ? '0.3' : '0.7'; (e.currentTarget as HTMLElement).style.background = 'none'; }}
     >
       {children}

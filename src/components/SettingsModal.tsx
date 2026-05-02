@@ -39,7 +39,7 @@ function Row({ label, children, desc }: { label: string; children: React.ReactNo
       justifyContent: 'space-between', 
       alignItems: 'center', 
       padding: '20px 0',
-      borderBottom: '1px solid rgba(255,255,255,0.06)'
+      borderBottom: '1px solid var(--vscode-border)'
     }}>
       <div style={{ flex: 1, paddingRight: '20px' }}>
         <div style={{ fontWeight: 500, fontSize: '14px', color: 'var(--vscode-text)' }}>{label}</div>
@@ -56,7 +56,7 @@ function Stepper({ value, min, max, step = 1, unit = '', onChange }: {
   value: number; min: number; max: number; step?: number; unit?: string; onChange: (v: number) => void;
 }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: 'rgba(255,255,255,0.03)', padding: '4px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.1)' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: 'var(--vscode-input)', padding: '4px', borderRadius: '6px', border: '1px solid var(--vscode-border)' }}>
       <button 
         onClick={() => onChange(Math.max(min, value - step))}
         style={{ background: 'none', border: 'none', color: 'var(--vscode-text)', cursor: 'pointer', padding: '4px', opacity: 0.7, display: 'flex' }}
@@ -76,7 +76,7 @@ function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) =>
       onClick={() => onChange(!value)}
       style={{
         width: '40px', height: '22px', borderRadius: '11px', cursor: 'pointer',
-        background: value ? 'var(--vscode-accent)' : 'rgba(255,255,255,0.2)',
+        background: value ? 'var(--vscode-accent)' : 'var(--vscode-border)',
         position: 'relative', transition: 'background 0.2s', flexShrink: 0,
       }}
     >
@@ -102,8 +102,8 @@ function SidebarTab({ label, icon, active, onClick }: { label: string, icon: Rea
         padding: '10px 14px',
         borderRadius: '8px',
         cursor: 'pointer',
-        background: active ? 'rgba(255,255,255,0.08)' : 'transparent',
-        color: active ? 'var(--vscode-text)' : 'rgba(255,255,255,0.6)',
+        background: active ? 'var(--vscode-input)' : 'transparent',
+        color: active ? 'var(--vscode-text-active)' : 'var(--vscode-text)',
         fontWeight: active ? 500 : 400,
         fontSize: '13px',
         transition: 'all 0.15s ease'
@@ -137,7 +137,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
           background: 'var(--vscode-bg)',
           borderRadius: '12px',
           boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
-          border: '1px solid rgba(255,255,255,0.08)'
+          border: '1px solid var(--vscode-border)'
         }}
       >
         
@@ -145,7 +145,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
         <div style={{ 
           width: '240px', 
           background: 'var(--vscode-sidebar)', 
-          borderRight: '1px solid rgba(255,255,255,0.06)',
+          borderRight: '1px solid var(--vscode-border)',
           display: 'flex',
           flexDirection: 'column',
           padding: '16px 12px'
@@ -154,7 +154,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
             <div 
               onClick={onClose}
               style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '28px', borderRadius: '50%', cursor: 'pointer', background: 'transparent', transition: 'background 0.2s' }}
-              onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--vscode-input)'}
               onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
             >
               <X size={18} style={{ opacity: 0.8 }} />
@@ -186,7 +186,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
             fontWeight: 500, 
             margin: '0 0 16px 0', 
             paddingBottom: '16px', 
-            borderBottom: '1px solid rgba(255,255,255,0.06)' 
+            borderBottom: '1px solid var(--vscode-border)' 
           }}>
             {activeTab === 'general' && 'General Settings'}
             {activeTab === 'editor' && 'Editor Settings'}
@@ -197,15 +197,15 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
           {activeTab === 'general' && (
             <div style={{ display: 'flex', flexDirection: 'column' }}>
               <Row label="Theme" desc="Application color scheme">
-                <div style={{ display: 'flex', background: 'rgba(255,255,255,0.04)', padding: '4px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <div style={{ display: 'flex', background: 'var(--vscode-input)', padding: '4px', borderRadius: '8px', border: '1px solid var(--vscode-border)' }}>
                   {(['dark', 'light'] as const).map(t => (
                     <button
                       key={t}
                       onClick={() => set('theme', t)}
                       style={{
                         display: 'flex', alignItems: 'center', gap: '6px',
-                        background: settings.theme === t ? 'rgba(255,255,255,0.1)' : 'transparent',
-                        color: settings.theme === t ? '#fff' : 'rgba(255,255,255,0.6)',
+                        background: settings.theme === t ? 'var(--vscode-sidebar)' : 'transparent',
+                        color: settings.theme === t ? 'var(--vscode-text-active)' : 'var(--vscode-text)',
                         border: 'none',
                         padding: '6px 14px',
                         borderRadius: '6px',
@@ -263,14 +263,14 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
               </Row>
 
               <Row label="Context Window" desc="Tokens the model can hold in memory. Larger means more context, but uses more RAM and runs slower.">
-                <div style={{ display: 'flex', background: 'rgba(255,255,255,0.04)', padding: '4px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <div style={{ display: 'flex', background: 'var(--vscode-input)', padding: '4px', borderRadius: '8px', border: '1px solid var(--vscode-border)' }}>
                   {([2048, 4096, 8192] as const).map(n => (
                     <button
                       key={n}
                       onClick={() => set('numCtx', n)}
                       style={{ 
-                        background: settings.numCtx === n ? 'rgba(255,255,255,0.1)' : 'transparent',
-                        color: settings.numCtx === n ? '#fff' : 'rgba(255,255,255,0.6)',
+                        background: settings.numCtx === n ? 'var(--vscode-sidebar)' : 'transparent',
+                        color: settings.numCtx === n ? 'var(--vscode-text-active)' : 'var(--vscode-text)',
                         border: 'none',
                         padding: '6px 14px',
                         borderRadius: '6px',
@@ -295,8 +295,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
                   rows={8}
                   style={{
                     width: '100%',
-                    background: 'rgba(0,0,0,0.15)',
-                    border: '1px solid rgba(255,255,255,0.1)',
+                    background: 'var(--vscode-input)',
+                    border: '1px solid var(--vscode-border)',
                     color: 'var(--vscode-text)',
                     padding: '12px 14px',
                     fontSize: '13px',
@@ -308,18 +308,18 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
                     boxSizing: 'border-box',
                   }}
                   onFocus={e => e.target.style.borderColor = 'var(--vscode-accent)'}
-                  onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.1)'}
+                  onBlur={e => e.target.style.borderColor = 'var(--vscode-border)'}
                 />
                 <button
                   onClick={() => set('systemPrompt', DEFAULT_SYSTEM_PROMPT)}
                   style={{
                     marginTop: '10px', fontSize: '12px', opacity: 0.7,
-                    background: 'transparent', border: '1px solid rgba(255,255,255,0.15)',
+                    background: 'transparent', border: '1px solid var(--vscode-border)',
                     color: 'var(--vscode-text)', padding: '6px 14px',
                     borderRadius: '6px', cursor: 'pointer',
                     transition: 'background 0.2s'
                   }}
-                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
+                  onMouseEnter={e => e.currentTarget.style.background = 'var(--vscode-input)'}
                   onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                 >
                   Reset to default

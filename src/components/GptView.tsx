@@ -487,7 +487,7 @@ const GptView: React.FC<GptViewProps> = ({
                               const lang = /language-(\w+)/.exec(className || '')?.[1];
                               const code = String(children).replace(/\n$/, '');
                               if (!inline && lang) return <CodeBlock code={code} language={lang} onSendToEditor={handleSendToEditor} />;
-                              return <code style={{ background: 'rgba(255,255,255,0.1)', padding: '1px 5px', borderRadius: 3, fontFamily: "'Cascadia Code', monospace", fontSize: '0.9em' }} {...props}>{children}</code>;
+                              return <code style={{ background: 'var(--vscode-input)', padding: '1px 5px', borderRadius: 3, fontFamily: "'Cascadia Code', monospace", fontSize: '0.9em' }} {...props}>{children}</code>;
                             },
                           }}
                         >

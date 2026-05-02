@@ -144,7 +144,7 @@ function MenuDropdown({
       <div
         className="menu-item"
         onClick={onOpen}
-        style={{ background: isOpen ? 'rgba(255,255,255,0.1)' : undefined }}
+        style={{ background: isOpen ? 'var(--vscode-input)' : undefined }}
       >
         {name}
       </div>
@@ -203,7 +203,7 @@ function MenuRowItem({ item, hasSubmenu }: { item: MenuItem; hasSubmenu?: boolea
       onMouseEnter={e => {
         if (item.action) {
           (e.currentTarget as HTMLElement).style.background = 'var(--vscode-accent)';
-          (e.currentTarget as HTMLElement).style.color = '#fff';
+          (e.currentTarget as HTMLElement).style.color = 'var(--btn-text)';
         }
       }}
       onMouseLeave={e => {

@@ -100,7 +100,7 @@ div:hover > .kill-inst-btn {
   /* VS Code Light Theme Colors */
   --vscode-bg: #ffffff;
   --vscode-sidebar: #f3f3f3;
-  --vscode-activity-bar: #2c2c2c; /* Activity bar often stays dark or becomes very light, let's keep it standard VS light */
+  --vscode-activity-bar: #ebebeb; /* Standard VS Code light mode activity bar */
   --vscode-border: #e5e5e5;
   --vscode-text: #333333;
   --vscode-text-active: #000000;
@@ -1957,6 +1957,55 @@ body {
   align-items: center;
   gap: 4px;
 }
+
+/* LIGHT THEME OVERRIDES FOR AGENT INTERFACE */
+[data-theme="light"] .agent-shell { background: var(--vscode-bg); color: var(--vscode-text); }
+[data-theme="light"] .agent-sidebar { background: var(--vscode-sidebar); border-right-color: var(--vscode-border); }
+[data-theme="light"] .agent-sidebar-header, [data-theme="light"] .agent-topbar { border-bottom-color: var(--vscode-border); }
+[data-theme="light"] .agent-topbar { background: var(--vscode-sidebar); }
+[data-theme="light"] .agent-section-title { color: var(--vscode-text-active); }
+[data-theme="light"] .agent-icon-btn { color: var(--vscode-text); }
+[data-theme="light"] .agent-icon-btn:hover:not(:disabled), [data-theme="light"] .agent-icon-btn.active { color: var(--vscode-text-active); background: var(--vscode-input); border-color: var(--vscode-border); }
+[data-theme="light"] .agent-section-label { color: var(--vscode-text-active); }
+[data-theme="light"] .agent-search-box { background: var(--vscode-input); border-color: var(--vscode-border); color: var(--vscode-text); }
+[data-theme="light"] .agent-search-box input, [data-theme="light"] .agent-rename-input { color: var(--vscode-text-active); }
+[data-theme="light"] .agent-thread { color: var(--vscode-text); }
+[data-theme="light"] .agent-thread:hover { background: var(--vscode-input); }
+[data-theme="light"] .agent-thread.active { background: var(--vscode-input); border-color: var(--vscode-border); }
+[data-theme="light"] .agent-thread-icon { color: var(--vscode-accent); }
+[data-theme="light"] .agent-thread-title { color: var(--vscode-text-active); }
+[data-theme="light"] .agent-thread-time { color: var(--vscode-text); opacity: 0.8; }
+[data-theme="light"] .agent-thread-actions button:hover { background: rgba(0,0,0,0.1); color: var(--vscode-text-active); }
+[data-theme="light"] .agent-main { background: var(--vscode-bg); }
+[data-theme="light"] .agent-topbar-title { color: var(--vscode-text-active); }
+[data-theme="light"] .agent-settings-strip { background: var(--vscode-sidebar); border-bottom-color: var(--vscode-border); }
+[data-theme="light"] .agent-settings-strip button { background: var(--vscode-input); border-color: var(--vscode-border); color: var(--vscode-text); }
+[data-theme="light"] .agent-empty-state { color: var(--vscode-text); }
+[data-theme="light"] .agent-empty-icon { color: var(--vscode-text); opacity: 0.5; }
+[data-theme="light"] .agent-empty-state h2 { color: var(--vscode-text-active); }
+[data-theme="light"] .agent-empty-state p { color: var(--vscode-text); }
+[data-theme="light"] .agent-avatar.assistant { background: var(--vscode-sidebar); border-color: var(--vscode-border); color: var(--vscode-accent); }
+[data-theme="light"] .agent-user-card, [data-theme="light"] .agent-message-card { background: var(--vscode-sidebar); border-color: var(--vscode-border); color: var(--vscode-text-active); }
+[data-theme="light"] .agent-markdown { color: var(--vscode-text); }
+[data-theme="light"] .agent-inline-code { background: var(--vscode-input); border-color: var(--vscode-border); }
+[data-theme="light"] .agent-execution { border-color: var(--vscode-border); background: var(--vscode-bg); }
+[data-theme="light"] .agent-execution-toggle { border-bottom-color: var(--vscode-border); background: var(--vscode-sidebar); color: var(--vscode-text); }
+[data-theme="light"] .agent-count { background: var(--vscode-input); color: var(--vscode-text); }
+[data-theme="light"] .agent-log-row { border-bottom-color: var(--vscode-border); }
+[data-theme="light"] .agent-log-meta { color: var(--vscode-text); opacity: 0.8; }
+[data-theme="light"] .agent-log-row pre, [data-theme="light"] .agent-log-pre { color: var(--vscode-text); opacity: 0.8; }
+[data-theme="light"] .agent-composer-wrap { border-top-color: var(--vscode-border); background: var(--vscode-sidebar); }
+[data-theme="light"] .agent-composer { border-color: var(--vscode-border); background: var(--vscode-input); }
+[data-theme="light"] .agent-composer textarea { color: var(--vscode-text-active); }
+[data-theme="light"] .agent-model-inline .model-selector-btn { border-color: var(--vscode-border); background: var(--vscode-input); }
+[data-theme="light"] .agent-model-presets button { border-color: var(--vscode-border); color: var(--vscode-text); }
+[data-theme="light"] .agent-model-presets button:hover, [data-theme="light"] .agent-model-presets button.active { color: var(--vscode-text-active); border-color: var(--vscode-accent); background: var(--vscode-input); }
+[data-theme="light"] .agent-select-control { border-color: var(--vscode-border); background: var(--vscode-input); color: var(--vscode-text); }
+[data-theme="light"] .agent-select-control select { color: var(--vscode-text-active); }
+[data-theme="light"] .agent-select-control option { background: var(--vscode-input); color: var(--vscode-text-active); }
+[data-theme="light"] .agent-send-btn { border-color: var(--vscode-accent); background: var(--vscode-accent); color: var(--btn-text); }
+[data-theme="light"] .agent-send-btn:hover:not(:disabled) { opacity: 0.9; }
+[data-theme="light"] .agent-send-btn:disabled { border-color: var(--vscode-border); background: var(--vscode-input); color: var(--vscode-text); }
 
 @media (max-width: 980px) {
   .agent-sidebar { width: 238px; min-width: 210px; }

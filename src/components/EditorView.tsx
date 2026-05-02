@@ -552,7 +552,7 @@ const EditorView: React.FC<EditorViewProps> = ({ settings, setSettings, pendingE
                     {gitDirtyCount > 0 && (
                       <span style={{
                         position: 'absolute', top: -5, right: -6,
-                        background: '#007acc', color: '#fff',
+                        background: 'var(--vscode-accent)', color: 'var(--btn-text)',
                         fontSize: '9px', borderRadius: '10px', padding: '0 3px', minWidth: '14px',
                         textAlign: 'center', fontWeight: 700, lineHeight: '14px',
                       }}>{gitDirtyCount}</span>
@@ -727,7 +727,7 @@ const EditorView: React.FC<EditorViewProps> = ({ settings, setSettings, pendingE
                           fontSize: '10px',
                           color: indexing ? '#fa0' : '#4caf50',
                           marginRight: '12px',
-                          background: 'rgba(255,255,255,0.06)',
+                          background: 'var(--vscode-input)',
                           padding: '2px 8px', borderRadius: '10px',
                         }}>
                           {indexing ? 'Indexing…' : `${indexChunks.toLocaleString()} chunks`}
@@ -774,7 +774,7 @@ const EditorView: React.FC<EditorViewProps> = ({ settings, setSettings, pendingE
                 )}
               </div>
               {/* Toggle Chat | Agent */}
-              <div style={{ display: 'none', width: '100%', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+              <div style={{ display: 'none', width: '100%', borderBottom: '1px solid var(--vscode-border)' }}>
                 {(['chat', 'agent'] as const).map(mode => (
                   <button
                     key={mode}
@@ -782,7 +782,8 @@ const EditorView: React.FC<EditorViewProps> = ({ settings, setSettings, pendingE
                     style={{
                       flex: 1, background: 'none', border: 'none', padding: '6px 0', cursor: 'pointer',
                       fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px',
-                      color: copilotMode === mode ? 'var(--vscode-text-active)' : 'rgba(255,255,255,0.4)',
+                      color: copilotMode === mode ? 'var(--vscode-text-active)' : 'var(--vscode-text)',
+                      opacity: copilotMode === mode ? 1 : 0.6,
                       borderBottom: copilotMode === mode ? '2px solid var(--vscode-accent)' : '2px solid transparent',
                       transition: 'all 0.2s',
                     }}

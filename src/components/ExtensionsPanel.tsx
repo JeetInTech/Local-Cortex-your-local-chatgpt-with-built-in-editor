@@ -89,7 +89,7 @@ const ExtensionsPanel: React.FC<ExtensionsPanelProps> = ({ settings, setSettings
               const enabled = exts.includes(ext.id);
               return (
                 <div key={ext.id} style={{
-                  display: 'flex', padding: '10px', background: 'rgba(255,255,255,0.02)',
+                  display: 'flex', padding: '10px', background: 'var(--vscode-input)',
                   border: '1px solid var(--vscode-border)', borderRadius: '6px', marginBottom: '8px',
                   alignItems: 'flex-start', gap: '12px'
                 }}>
@@ -106,9 +106,9 @@ const ExtensionsPanel: React.FC<ExtensionsPanelProps> = ({ settings, setSettings
                     <button
                       onClick={() => toggleExtension(ext.id)}
                       style={{
-                        background: enabled ? 'rgba(255,255,255,0.1)' : 'var(--vscode-accent)',
-                        color: enabled ? 'var(--vscode-text)' : '#fff',
-                        border: 'none', padding: '4px 12px', borderRadius: '4px',
+                        background: enabled ? 'var(--vscode-input)' : 'var(--vscode-accent)',
+                        color: enabled ? 'var(--vscode-text)' : 'var(--btn-text)',
+                        border: '1px solid var(--vscode-border)', padding: '4px 12px', borderRadius: '4px',
                         fontSize: '11px', fontWeight: 600, cursor: 'pointer',
                         transition: 'all 0.2s'
                       }}
