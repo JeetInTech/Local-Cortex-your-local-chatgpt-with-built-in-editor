@@ -524,6 +524,191 @@ body {
   cursor: not-allowed;
 }
 
+/* --- #4 Error toast --- */
+.gpt-error-toast {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 24px 8px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #fca5a5;
+  font-size: 13px;
+}
+.gpt-error-retry {
+  background: rgba(239,68,68,0.2);
+  border: 1px solid rgba(239,68,68,0.4);
+  color: #fca5a5;
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.gpt-error-retry:hover { background: rgba(239,68,68,0.35); }
+.gpt-error-dismiss {
+  background: transparent;
+  border: none;
+  color: #fca5a5;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 4px;
+}
+
+/* --- #6 Drag-over highlight --- */
+.gpt-input-wrapper.drag-over {
+  border-color: var(--vscode-accent);
+  background: rgba(0,122,204,0.06);
+}
+
+/* --- #6 Attachment chips --- */
+.gpt-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 24px 6px;
+}
+.gpt-attachment-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  background: var(--gpt-input-bg);
+  border: 1px solid var(--gpt-border);
+  border-radius: 20px;
+  font-size: 12px;
+  color: var(--gpt-text-muted);
+  max-width: 220px;
+}
+.gpt-attachment-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gpt-attachment-chip button {
+  background: transparent;
+  border: none;
+  color: var(--gpt-text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.gpt-attachment-chip button:hover { color: var(--gpt-text); }
+
+/* --- Branch Navigator --- */
+.branch-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+}
+.branch-nav-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--gpt-border);
+  border-radius: 4px;
+  color: var(--gpt-text-muted);
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s, color 0.15s;
+}
+.branch-nav-btn:hover:not(:disabled) {
+  background: rgba(255,255,255,0.07);
+  color: var(--gpt-text);
+}
+[data-theme="light"] .branch-nav-btn:hover:not(:disabled) {
+  background: rgba(0,0,0,0.06);
+}
+.branch-nav-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.branch-nav-label {
+  font-size: 11px;
+  color: var(--gpt-text-muted);
+  min-width: 30px;
+  text-align: center;
+}
+
+/* --- AI message footer row (branch nav + regen btn) --- */
+.gpt-ai-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+/* --- RAG Sources Panel --- */
+.rag-sources-panel {
+  margin-top: 8px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--gpt-border);
+  background: rgba(255,255,255,0.02);
+}
+[data-theme="light"] .rag-sources-panel {
+  background: rgba(0,0,0,0.02);
+}
+.rag-sources-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  color: var(--gpt-text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+}
+.rag-sources-toggle:hover {
+  color: var(--gpt-text);
+  background: rgba(255,255,255,0.04);
+}
+[data-theme="light"] .rag-sources-toggle:hover {
+  background: rgba(0,0,0,0.04);
+}
+.rag-sources-list {
+  border-top: 1px solid var(--gpt-border);
+  padding: 6px 0;
+}
+.rag-source-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+.rag-source-file {
+  color: var(--vscode-accent);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rag-source-lines {
+  color: var(--gpt-text-muted);
+  flex-shrink: 0;
+}
+.rag-source-score {
+  color: #10b981;
+  font-weight: 600;
+  flex-shrink: 0;
+  min-width: 32px;
+  text-align: right;
+}
+
 /* =========================================
    EDITOR MODE STYLES
    ========================================= */

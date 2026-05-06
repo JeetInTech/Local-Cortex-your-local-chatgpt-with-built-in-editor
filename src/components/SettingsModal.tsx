@@ -1,15 +1,18 @@
 import React, { useState } from 'react';
 import { X, Minus, Plus, Settings, Code, Terminal as TerminalIcon, Bot, Moon, Sun } from 'lucide-react';
 
-export const DEFAULT_SYSTEM_PROMPT = `You are a brilliant, direct AI assistant. Follow these rules absolutely:
+export const DEFAULT_SYSTEM_PROMPT = `You are a precise, honest AI coding assistant running locally. Follow these rules absolutely:
 
-1. Answer the actual question immediately. No preamble, no throat-clearing.
+1. Answer the actual question immediately. No preamble, no filler phrases like "Certainly!" or "Great question!".
 2. Format ALL code with markdown code blocks and the correct language tag (e.g. \`\`\`typescript).
-3. Use headers and bullets only when structure genuinely helps — not by default.
-4. When code snippets are provided between [WORKSPACE CONTEXT] tags, use them to give accurate, project-specific answers.
-5. Never open with "Certainly!", "Of course!", "Great question!" or any filler phrase.
-6. If you don't know something, say so directly. Never fabricate APIs, functions, or facts.
-7. Keep answers tight. If the question is simple, the answer should be short.`;
+3. HONESTY OVER HELPFULNESS — if you are not sure about something, say so explicitly.
+   - Use phrases like "I believe...", "I'm not certain, but...", or "You should verify this."
+   - Never invent library names, API signatures, CLI flags, crate names, or function names. If you don't know the exact API, say so and tell the user to check the docs.
+4. DETECT MIXED CONCEPTS — if a question combines things that don't go together (e.g. "React Tauri" instead of "Rust Tauri"), point out the inconsistency BEFORE answering. Do not silently answer a question that seems to contain a typo or confused terminology.
+   - Example: "You mentioned 'React Tauri' — I think you may mean Tauri with a Rust backend? Tauri's backend is written in Rust, not React. React is only used for the frontend UI. Let me answer based on that assumption."
+5. When code snippets are provided between [WORKSPACE CONTEXT] tags, use them to give accurate, project-specific answers.
+6. Keep answers tight. Short question → short answer. Complex question → thorough but no padding.
+7. Never claim something works if you haven't seen it work in the provided context.`;
 
 export interface AppSettings {
   theme: 'dark' | 'light' | 'bearded' | 'github-dark';
@@ -23,6 +26,8 @@ export interface AppSettings {
   systemPrompt: string;
   ragEnabled: boolean;
   numCtx: number;
+  temperature: number;   // 0.0–1.0; lower = less hallucination
+  clarifyMode: boolean;  // ask model to restate ambiguous queries first
 }
 
 interface SettingsModalProps {
@@ -262,27 +267,75 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
                 <Toggle value={settings.ragEnabled} onChange={v => set('ragEnabled', v)} />
               </Row>
 
-              <Row label="Context Window" desc="Tokens the model can hold in memory. Larger means more context, but uses more RAM and runs slower.">
-                <div style={{ display: 'flex', background: 'var(--vscode-input)', padding: '4px', borderRadius: '8px', border: '1px solid var(--vscode-border)' }}>
-                  {([2048, 4096, 8192] as const).map(n => (
+              <div style={{ padding: '20px 0', borderBottom: '1px solid var(--vscode-border)' }}>
+                <div style={{ fontWeight: 500, fontSize: '14px', color: 'var(--vscode-text)', marginBottom: '6px' }}>Context Window</div>
+                <div style={{ fontSize: '13px', opacity: 0.5, lineHeight: 1.4, marginBottom: '12px' }}>Max tokens the model sees at once. llama3.2 supports up to 128K. Requires more RAM the higher you go.</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, background: 'var(--vscode-input)', padding: '6px', borderRadius: '8px', border: '1px solid var(--vscode-border)' }}>
+                  {([
+                    { val: 2048,   label: '2K',   hint: '< 3 GB' },
+                    { val: 4096,   label: '4K',   hint: '~3 GB' },
+                    { val: 8192,   label: '8K',   hint: '~4 GB' },
+                    { val: 16384,  label: '16K',  hint: '~5 GB' },
+                    { val: 32768,  label: '32K',  hint: '~6 GB' },
+                    { val: 65536,  label: '64K',  hint: '~8 GB' },
+                    { val: 131072, label: '128K', hint: '~12 GB' },
+                  ] as const).map(({ val, label, hint }) => (
                     <button
-                      key={n}
-                      onClick={() => set('numCtx', n)}
-                      style={{ 
-                        background: settings.numCtx === n ? 'var(--vscode-sidebar)' : 'transparent',
-                        color: settings.numCtx === n ? 'var(--vscode-text-active)' : 'var(--vscode-text)',
+                      key={val}
+                      onClick={() => set('numCtx', val)}
+                      title={`Requires ${hint} RAM`}
+                      style={{
+                        flex: 1,
+                        background: settings.numCtx === val ? 'var(--vscode-accent)' : 'transparent',
+                        color: settings.numCtx === val ? '#fff' : 'var(--vscode-text)',
                         border: 'none',
-                        padding: '6px 14px',
+                        padding: '6px 10px',
                         borderRadius: '6px',
                         cursor: 'pointer',
                         fontSize: '13px',
-                        fontWeight: settings.numCtx === n ? 500 : 400,
-                        transition: 'all 0.2s'
+                        fontWeight: settings.numCtx === val ? 600 : 400,
+                        transition: 'all 0.2s',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: 2,
+                        lineHeight: 1.2,
+                        minWidth: '50px',
                       }}
                     >
-                      {n === 2048 ? '2K' : n === 4096 ? '4K' : '8K'}
+                      <span>{label}</span>
+                      <span style={{ fontSize: '10px', opacity: 0.65 }}>{hint}</span>
                     </button>
                   ))}
+                </div>
+              </div>
+
+              <Row label="Temperature" desc="Lower = more focused & accurate. Higher = more creative but hallucinates more. Recommended: 0.2–0.5 for coding.">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <input
+                    type="range" min={0} max={1} step={0.05}
+                    value={settings.temperature ?? 0.3}
+                    onChange={e => set('temperature', parseFloat(e.target.value))}
+                    style={{ width: 120 }}
+                  />
+                  <span style={{ fontSize: 13, minWidth: 32, fontFamily: 'monospace' }}>{(settings.temperature ?? 0.3).toFixed(2)}</span>
+                </div>
+              </Row>
+
+              <Row label="Clarify Mode" desc="Before answering, the AI will restate what it understood from your question and flag any ambiguous terms (e.g. 'React Tauri' vs 'Rust Tauri'). Adds one extra step but reduces confident wrong answers.">
+                <Toggle value={settings.clarifyMode ?? false} onChange={v => set('clarifyMode', v)} />
+              </Row>
+
+              <Row label="Recommended Models" desc="Run 'ollama run <model>' in your terminal to download these.">
+                <div style={{ fontSize: '12px', color: 'var(--vscode-text)', opacity: 0.8, lineHeight: 1.5, background: 'var(--vscode-input)', padding: '10px 14px', borderRadius: '8px', border: '1px solid var(--vscode-border)', width: '300px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}><strong style={{ color: 'var(--vscode-accent)' }}>qwen2.5-coder:7b</strong> <span>~8GB RAM</span></div>
+                  <div style={{ marginBottom: 12, fontSize: '11px', opacity: 0.7 }}>The absolute best local model for coding right now. Highly recommended.</div>
+                  
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}><strong style={{ color: 'var(--vscode-accent)' }}>llama3.2</strong> <span>~4GB RAM</span></div>
+                  <div style={{ marginBottom: 12, fontSize: '11px', opacity: 0.7 }}>Extremely fast, lightweight, great for older laptops.</div>
+                  
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}><strong style={{ color: 'var(--vscode-accent)' }}>qwen2.5-coder:32b</strong> <span>~24GB RAM</span></div>
+                  <div style={{ fontSize: '11px', opacity: 0.7 }}>Desktop-class. Matches GPT-4 on coding, but requires a heavy GPU.</div>
                 </div>
               </Row>
 

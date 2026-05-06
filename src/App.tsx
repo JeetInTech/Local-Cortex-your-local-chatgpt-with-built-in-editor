@@ -17,7 +17,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   enabledExtensions: [],
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
   ragEnabled: true,
-  numCtx: 8192,
+  numCtx: 32768,
+  temperature: 0.2, // Strict temperature for max accuracy
+  clarifyMode: true, // Auto-restate intent to prevent hallucination
 };
 
 function loadSettings(): AppSettings {
@@ -116,6 +118,8 @@ function App() {
             systemPrompt={settings.systemPrompt}
             ragEnabled={settings.ragEnabled}
             numCtx={settings.numCtx}
+            temperature={settings.temperature ?? 0.3}
+            clarifyMode={settings.clarifyMode ?? false}
           />
         </div>
         <div style={{ display: currentView === 'editor' ? 'flex' : 'none', flex: 1, width: '100%', height: '100%', overflow: 'hidden' }}>

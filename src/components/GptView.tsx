@@ -2,7 +2,8 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Plus, Send, Bot, Search, Trash2, MessageSquare,
   Copy, Check, Download, RotateCcw, StopCircle,
-  Brain, X, Pencil, Sparkles, Bug, BookOpen, Zap, Blocks
+  Brain, X, Pencil, Sparkles, Bug, BookOpen, Zap, Blocks,
+  ChevronLeft, ChevronRight
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { invoke } from '@tauri-apps/api/core';
@@ -14,11 +15,11 @@ import { DEFAULT_SYSTEM_PROMPT } from './SettingsModal';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const MODEL_STORAGE_KEY = 'localcortex-chat-model';
-const RAG_BANNER_KEY    = 'localcortex-rag-banner-dismissed';
-const MAX_CTX_MESSAGES  = 20;
-const RAG_SCORE_MIN     = 0.25;
-const RAG_TOP_K         = 5;
+const MODEL_STORAGE_KEY    = 'localcortex-chat-model';
+const RAG_BANNER_KEY       = 'localcortex-rag-banner-dismissed';
+const RESERVE_OUTPUT_TOKENS = 2048; // always reserve this for the model's reply
+const RAG_SCORE_MIN        = 0.25;
+const RAG_TOP_K            = 5;
 
 const SUGGESTED = [
   { icon: <Search size={22} strokeWidth={1.5} style={{ color: '#3b82f6' }} />, label: 'Explain codebase',    prompt: 'Explain how this codebase is structured and what the main components do.' },
@@ -35,6 +36,14 @@ interface Message {
   id: string;
   role: 'user' | 'ai' | 'system';
   content: string;
+  // AI regen branches
+  branches?: string[];
+  branchIndex?: number;
+  // User edit branches
+  editVersions?: { userContent: string; tail: Message[] }[];
+  editVersionIdx?: number;
+  // RAG sources used when generating this AI message
+  ragSources?: RagResult[];
 }
 
 interface ChatSession {
@@ -58,6 +67,8 @@ interface GptViewProps {
   systemPrompt?: string;
   ragEnabled?: boolean;
   numCtx?: number;
+  temperature?: number;
+  clarifyMode?: boolean;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -72,9 +83,29 @@ function sessionTitle(msgs: Message[]) {
 
 function estimateTokens(text: string) { return Math.round(text.length / 4); }
 
-function trimContext(msgs: Message[]): { msgs: Message[]; trimmed: boolean } {
-  if (msgs.length <= MAX_CTX_MESSAGES) return { msgs, trimmed: false };
-  return { msgs: msgs.slice(msgs.length - MAX_CTX_MESSAGES), trimmed: true };
+/**
+ * Token-budget sliding window.
+ * Walks backwards from the newest message, accumulating token estimates
+ * until the budget (numCtx - reservedOutput - systemPromptTokens) is full.
+ * This matches how real LLM apps handle context: short chats keep all
+ * history, long chats drop only the oldest messages.
+ */
+function trimContext(
+  msgs: Message[],
+  numCtx: number,
+  systemPromptTokens: number,
+): { msgs: Message[]; trimmed: boolean } {
+  const budget = Math.max(512, numCtx - RESERVE_OUTPUT_TOKENS - systemPromptTokens);
+  let used = 0;
+  const kept: Message[] = [];
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const t = estimateTokens(msgs[i].content);
+    // Always keep at least 1 message even if it overflows
+    if (used + t > budget && kept.length > 0) break;
+    kept.unshift(msgs[i]);
+    used += t;
+  }
+  return { msgs: kept, trimmed: kept.length < msgs.length };
 }
 
 function getWorkspace() { return localStorage.getItem('localcortex-cwd') || ''; }
@@ -112,6 +143,51 @@ function AiActions({ content, onSend }: { content: string; onSend?: (n: string, 
   );
 }
 
+// Branch navigator shown as  < 1 of 3 >
+function BranchNav({ current, total, onPrev, onNext }: { current: number; total: number; onPrev: () => void; onNext: () => void }) {
+  if (total <= 1) return null;
+  return (
+    <div className="branch-nav">
+      <button className="branch-nav-btn" onClick={onPrev} disabled={current === 0}>
+        <ChevronLeft size={11} />
+      </button>
+      <span className="branch-nav-label">{current + 1} / {total}</span>
+      <button className="branch-nav-btn" onClick={onNext} disabled={current === total - 1}>
+        <ChevronRight size={11} />
+      </button>
+    </div>
+  );
+}
+
+// Collapsible RAG sources panel — shows which files the AI read
+function RagSourcesPanel({ sources }: { sources: RagResult[] }) {
+  const [open, setOpen] = useState(false);
+  if (!sources.length) return null;
+  return (
+    <div className="rag-sources-panel">
+      <button className="rag-sources-toggle" onClick={() => setOpen(o => !o)}>
+        <Brain size={11} />
+        <span>Read {sources.length} file{sources.length > 1 ? 's' : ''} from workspace</span>
+        <ChevronRight size={11} style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} />
+      </button>
+      {open && (
+        <div className="rag-sources-list">
+          {sources.map((r, i) => {
+            const fname = r.file_path.replace(/\\/g, '/').split('/').pop();
+            return (
+              <div key={i} className="rag-source-item">
+                <span className="rag-source-file">{fname}</span>
+                <span className="rag-source-lines">lines {r.start_line}–{r.end_line}</span>
+                <span className="rag-source-score">{Math.round(r.score * 100)}%</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 const GptView: React.FC<GptViewProps> = ({
@@ -119,9 +195,16 @@ const GptView: React.FC<GptViewProps> = ({
   onSendToEditor,
   systemPrompt,
   ragEnabled = true,
-  numCtx = 8192,
+  numCtx = 32768,
+  temperature = 0.3,
+  clarifyMode = false,
 }) => {
-  const effectivePrompt = systemPrompt || DEFAULT_SYSTEM_PROMPT;
+  // When clarifyMode is on, prefix the system prompt with a restate instruction
+  const effectivePrompt = (systemPrompt || DEFAULT_SYSTEM_PROMPT) + (
+    clarifyMode
+      ? `\n\nCLARIFY MODE: Before answering any question, start with a single sentence beginning with "Understanding your question:" that restates what you understood. If you detect any mixed-up technology names or contradictory concepts in the question, flag them explicitly before continuing.`
+      : ''
+  );
 
   const [currentModel, setCurrentModel] = useState<string>(
     () => localStorage.getItem(MODEL_STORAGE_KEY) ?? ''
@@ -132,13 +215,18 @@ const GptView: React.FC<GptViewProps> = ({
   const [searchQuery, setSearchQuery]     = useState('');
   const [isGenerating, setIsGenerating]   = useState(false);
   const [isSearchingRag, setIsSearchingRag] = useState(false);
-  const [streamingText, setStreamingText] = useState('');   // live buffer
+  const [streamingText, setStreamingText] = useState('');
   const [contextTrimmed, setContextTrimmed] = useState(false);
   const [ragBannerOff, setRagBannerOff]   = useState(
     () => localStorage.getItem(RAG_BANNER_KEY) === 'true'
   );
   const [editingId, setEditingId]         = useState<string | null>(null);
   const [editDraft, setEditDraft]         = useState('');
+  // #4 — ephemeral error (never goes into chat history)
+  const [sendError, setSendError]         = useState<string | null>(null);
+  const [retryPayload, setRetryPayload]   = useState<{ prompt: string; session: ChatSession } | null>(null);
+  // #6 — file attachments
+  const [attachedFiles, setAttachedFiles] = useState<{ name: string; content: string }[]>([]);
 
   const bottomRef   = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -150,8 +238,10 @@ const GptView: React.FC<GptViewProps> = ({
       if (!models.length) return;
       const saved = localStorage.getItem(MODEL_STORAGE_KEY);
       if (!saved || !models.some(m => m.id === saved)) {
-        setCurrentModel(models[0].id);
-        localStorage.setItem(MODEL_STORAGE_KEY, models[0].id);
+        // Prefer the ultimate coding model if installed, otherwise grab the first available
+        const defaultModel = models.find(m => m.id.startsWith('qwen2.5-coder:7b'))?.id || models[0].id;
+        setCurrentModel(defaultModel);
+        localStorage.setItem(MODEL_STORAGE_KEY, defaultModel);
       }
     }).catch(() => {});
   }, []);
@@ -197,22 +287,23 @@ const GptView: React.FC<GptViewProps> = ({
   }, [activeId, saveSessions]);
 
   // ── RAG context builder ──────────────────────────────────────────────────
-  const buildRagContext = useCallback(async (query: string): Promise<string> => {
-    if (!ragEnabled) return '';
+  const buildRagContext = useCallback(async (query: string): Promise<{ context: string; sources: RagResult[] }> => {
+    if (!ragEnabled) return { context: '', sources: [] };
     const ws = getWorkspace();
-    if (!ws) return '';
+    if (!ws) return { context: '', sources: [] };
     try {
       const results = await invoke<RagResult[]>('rag_search', {
         query, k: RAG_TOP_K, activeFile: null, recentFiles: [],
       });
       const good = results.filter(r => r.score >= RAG_SCORE_MIN);
-      if (!good.length) return '';
+      if (!good.length) return { context: '', sources: [] };
       const snippets = good.map(r => {
         const fname = r.file_path.replace(/\\/g, '/').split('/').pop();
         return `### ${fname} (lines ${r.start_line}–${r.end_line})\n\`\`\`\n${r.content.slice(0, 600)}\n\`\`\``;
       }).join('\n\n');
-      return `\n\n[WORKSPACE CONTEXT]\n${snippets}\n[END WORKSPACE CONTEXT]`;
-    } catch { return ''; }
+      const context = `[WORKSPACE CONTEXT]\n${snippets}\n[END WORKSPACE CONTEXT]\n\n`;
+      return { context, sources: good };
+    } catch { return { context: '', sources: [] }; }
   }, [ragEnabled]);
 
   // ── core send ────────────────────────────────────────────────────────────
@@ -222,15 +313,17 @@ const GptView: React.FC<GptViewProps> = ({
 
     // 1. RAG search
     setIsSearchingRag(true);
-    const ragCtx = await buildRagContext(clean);
+    const { context: ragCtx, sources: ragSources } = await buildRagContext(clean);
     setIsSearchingRag(false);
 
-    // 2. Build system prompt
-    const fullSystem = effectivePrompt + ragCtx;
+    // 2. System prompt stays FIXED (Ollama can cache it across turns).
+    //    RAG context goes as a prefix on the current user message instead.
+    const fullSystem = effectivePrompt;
+    const userContentWithRag = ragCtx ? `${ragCtx}User question: ${clean}` : clean;
 
-    // 3. Build the new session state (trim for UI display)
+    // 3. Build the new session state
     const userMsg: Message = { id: genId(), role: 'user', content: clean };
-    const aiMsg:  Message  = { id: genId(), role: 'ai',   content: '' };
+    const aiMsg:  Message  = { id: genId(), role: 'ai', content: '', ragSources: ragSources.length ? ragSources : undefined };
     const uiMsgs = [...baseSession.messages, userMsg];
     const newSession: ChatSession = {
       ...baseSession,
@@ -272,14 +365,19 @@ const GptView: React.FC<GptViewProps> = ({
 
     stopRef.current = () => { unlisten1(); unlisten2(); setIsGenerating(false); setStreamingText(''); };
 
-    // Build api messages: previous context (trimmed) + current user message
-    const prevTrimResult = trimContext(baseSession.messages);
+    // 5. Token-budget trim — system prompt is now fixed so tokens are stable
+    const systemTokens = estimateTokens(fullSystem);
+    const prevTrimResult = trimContext(
+      baseSession.messages.filter(m => m.role !== 'system'),
+      numCtx,
+      systemTokens,
+    );
     setContextTrimmed(prevTrimResult.trimmed);
     const apiMessages = prevTrimResult.msgs
-      .filter(m => m.role !== 'system')
       .map(m => ({ role: m.role === 'ai' ? 'assistant' : 'user', content: m.content }))
       .filter(m => m.content.trim());
-    apiMessages.push({ role: 'user', content: clean });
+    // Current user message carries the RAG prefix
+    apiMessages.push({ role: 'user', content: userContentWithRag });
 
     try {
       await invoke('generate_response', {
@@ -288,53 +386,185 @@ const GptView: React.FC<GptViewProps> = ({
         messages: apiMessages,
         systemPrompt: fullSystem,
         numCtx,
+        temperature,
       });
     } catch (err) {
+      // #4 — Remove the empty AI placeholder, surface an ephemeral toast, allow retry
       setIsGenerating(false); setStreamingText('');
-      const errMsg = `**Error:** Failed to connect to Ollama.\n\n\`${err}\``;
       setSessions(prev => {
         const u = prev.map(s => {
           if (s.id !== newSession.id) return s;
-          return { ...s, messages: s.messages.map(m => m.id === aiId ? { ...m, content: errMsg } : m) };
+          // Strip the empty AI message slot — don't pollute history with error text
+          return { ...s, messages: s.messages.filter(m => m.id !== aiId) };
         });
         saveSessions(u); return u;
       });
+      const msg = err instanceof Error ? err.message : String(err);
+      setSendError(`Failed to connect to Ollama: ${msg}`);
+      setRetryPayload({ prompt: clean, session: newSession });
     }
   }, [isGenerating, buildRagContext, effectivePrompt, currentModel, numCtx, saveSessions]);
 
   const handleSubmit = useCallback(async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!input.trim() || isGenerating) return;
+    setSendError(null);
+    // #6 — prepend any attached file contents to the prompt
+    let fullPrompt = input;
+    if (attachedFiles.length > 0) {
+      const fileCtx = attachedFiles.map(f => `[Attached: ${f.name}]\n\`\`\`\n${f.content}\n\`\`\``).join('\n\n');
+      fullPrompt = `${fileCtx}\n\n${input}`;
+      setAttachedFiles([]);
+    }
     const base = activeSession ?? { id: genId(), title: 'New Chat', created_at: Date.now(), messages: [] };
-    await doSend(input, base);
-  }, [input, isGenerating, activeSession, doSend]);
+    await doSend(fullPrompt, base);
+  }, [input, isGenerating, activeSession, doSend, attachedFiles]);
 
-  // ── regenerate ───────────────────────────────────────────────────────────
+  // ── regenerate (non-destructive) ─────────────────────────────────────────
   const handleRegenerate = useCallback(async () => {
     if (!activeSession || isGenerating) return;
     const msgs = activeSession.messages;
     const lastUser = [...msgs].reverse().find(m => m.role === 'user');
     if (!lastUser) return;
-    // Find the index of the last AI message and trim from there
     let lastAiIdx = -1;
     for (let i = msgs.length - 1; i >= 0; i--) {
       if (msgs[i].role === 'ai') { lastAiIdx = i; break; }
     }
-    const trimmed = lastAiIdx >= 0 ? msgs.slice(0, lastAiIdx) : msgs;
-    const baseSession = { ...activeSession, messages: trimmed };
-    await doSend(lastUser.content, baseSession);
-  }, [activeSession, isGenerating, doSend]);
+    if (lastAiIdx < 0) return;
+    const oldAiMsg = msgs[lastAiIdx];
+    // Save current content into branches array
+    const existingBranches = oldAiMsg.branches ?? [oldAiMsg.content];
+    const newBranches = [...existingBranches, ''];
+    const newBranchIndex = newBranches.length - 1;
+    // Patch the AI message slot in-place — keep all messages after it too
+    const patchedMsgs = msgs.map((m, i) =>
+      i === lastAiIdx
+        ? { ...m, content: '', branches: newBranches, branchIndex: newBranchIndex }
+        : m
+    );
+    const patchedSession = { ...activeSession, messages: patchedMsgs };
+    setSessions(prev => {
+      const u = prev.map(s => s.id === patchedSession.id ? patchedSession : s);
+      saveSessions(u); return u;
+    });
+    // Now send, targeting the existing AI message id
+    const aiMsgId = oldAiMsg.id;
+    const baseMessages = patchedMsgs.slice(0, lastAiIdx).filter(m => m.role !== 'system');
+    // Build trimmed API context
+    const { context: ragCtx } = await buildRagContext(lastUser.content);
+    const fullSystem = effectivePrompt; // fixed — no RAG in system prompt
+    const userContentWithRag = ragCtx ? `${ragCtx}User question: ${lastUser.content}` : lastUser.content;
+    const systemTokens = estimateTokens(fullSystem);
+    const { msgs: trimmedCtx, trimmed } = trimContext(baseMessages, numCtx, systemTokens);
+    setContextTrimmed(trimmed);
+    const apiMessages = trimmedCtx
+      .map(m => ({ role: m.role === 'ai' ? 'assistant' : 'user', content: m.content }))
+      .filter(m => m.content.trim());
+    apiMessages.push({ role: 'user', content: userContentWithRag });
+    setIsGenerating(true);
+    setStreamingText('');
+    const sid = genId();
+    let buffer = '';
+    const unlisten1 = await listen<string>(`chat-stream-${sid}`, ev => {
+      buffer += ev.payload;
+      setStreamingText(buffer);
+    });
+    const unlisten2 = await listen(`chat-stream-done-${sid}`, () => {
+      setIsGenerating(false); setStreamingText('');
+      const finalContent = buffer;
+      setSessions(prev => {
+        const u = prev.map(s => {
+          if (s.id !== activeSession.id) return s;
+          return {
+            ...s, messages: s.messages.map(m => {
+              if (m.id !== aiMsgId) return m;
+              const updatedBranches = [...(m.branches ?? [m.content])];
+              updatedBranches[m.branchIndex ?? updatedBranches.length - 1] = finalContent;
+              return { ...m, content: finalContent, branches: updatedBranches };
+            })
+          };
+        });
+        saveSessions(u); return u;
+      });
+      unlisten1(); unlisten2(); stopRef.current = null;
+    });
+    stopRef.current = () => { unlisten1(); unlisten2(); setIsGenerating(false); setStreamingText(''); };
+    try {
+      await invoke('generate_response', { streamId: sid, model: currentModel, messages: apiMessages, systemPrompt: fullSystem, numCtx });
+    } catch (err) {
+      setIsGenerating(false); setStreamingText('');
+      setSessions(prev => {
+        const u = prev.map(s => {
+          if (s.id !== activeSession.id) return s;
+          return { ...s, messages: s.messages.map(m => m.id === aiMsgId ? { ...m, content: `**Error:** ${err}` } : m) };
+        });
+        saveSessions(u); return u;
+      });
+    }
+  }, [activeSession, isGenerating, effectivePrompt, buildRagContext, currentModel, numCtx, saveSessions]);
 
-  // ── edit + resend ────────────────────────────────────────────────────────
+  // ── switch AI branch (< >) ───────────────────────────────────────────────
+  const handleAiBranchSwitch = useCallback((msgId: string, dir: -1 | 1) => {
+    setSessions(prev => {
+      const u = prev.map(s => {
+        if (s.id !== activeId) return s;
+        return {
+          ...s, messages: s.messages.map(m => {
+            if (m.id !== msgId || !m.branches) return m;
+            const next = Math.max(0, Math.min(m.branches.length - 1, (m.branchIndex ?? m.branches.length - 1) + dir));
+            return { ...m, branchIndex: next, content: m.branches[next] };
+          })
+        };
+      });
+      saveSessions(u); return u;
+    });
+  }, [activeId, saveSessions]);
+
+  // ── edit + resend (non-destructive) ──────────────────────────────────────
   const handleEditSubmit = useCallback(async (msgId: string) => {
     if (!activeSession) return;
     const idx = activeSession.messages.findIndex(m => m.id === msgId);
     if (idx < 0) return;
-    const trimmed = activeSession.messages.slice(0, idx);
-    const baseSession = { ...activeSession, messages: trimmed };
+    const oldUserMsg = activeSession.messages[idx];
+    const tail = activeSession.messages.slice(idx + 1);
+    // Save the old version into editVersions
+    const existingVersions = oldUserMsg.editVersions ?? [{ userContent: oldUserMsg.content, tail }];
+    const newVersions = [...existingVersions, { userContent: editDraft, tail: [] }];
+    const newVersionIdx = newVersions.length - 1;
+    const baseMessages = activeSession.messages.slice(0, idx);
+    // Patch user message with new content + version history, strip old tail
+    const patchedUserMsg: Message = { ...oldUserMsg, content: editDraft, editVersions: newVersions, editVersionIdx: newVersionIdx };
+    const patchedSession = { ...activeSession, messages: [...baseMessages, patchedUserMsg] };
+    setSessions(prev => {
+      const u = prev.map(s => s.id === patchedSession.id ? patchedSession : s);
+      saveSessions(u); return u;
+    });
     setEditingId(null);
-    await doSend(editDraft, baseSession);
-  }, [activeSession, editDraft, doSend]);
+    await doSend(editDraft, patchedSession);
+  }, [activeSession, editDraft, doSend, saveSessions]);
+
+  // ── switch edit branch (< >) ─────────────────────────────────────────────
+  const handleEditBranchSwitch = useCallback((msgId: string, dir: -1 | 1) => {
+    setSessions(prev => {
+      const u = prev.map(s => {
+        if (s.id !== activeId) return s;
+        const msgIdx = s.messages.findIndex(m => m.id === msgId);
+        if (msgIdx < 0) return s;
+        const msg = s.messages[msgIdx];
+        if (!msg.editVersions) return s;
+        const next = Math.max(0, Math.min(msg.editVersions.length - 1, (msg.editVersionIdx ?? msg.editVersions.length - 1) + dir));
+        const version = msg.editVersions[next];
+        const newMsg = { ...msg, content: version.userContent, editVersionIdx: next };
+        const newMessages = [
+          ...s.messages.slice(0, msgIdx),
+          newMsg,
+          ...version.tail,
+        ];
+        return { ...s, messages: newMessages };
+      });
+      saveSessions(u); return u;
+    });
+  }, [activeId, saveSessions]);
 
   const handleStop = useCallback(() => { stopRef.current?.(); }, []);
 
@@ -418,6 +648,21 @@ const GptView: React.FC<GptViewProps> = ({
           </div>
         )}
 
+        {/* #4 — Ephemeral error toast (not stored in history) */}
+        {sendError && (
+          <div className="gpt-error-toast">
+            <span>⚠ {sendError}</span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="gpt-error-retry" onClick={async () => {
+                if (!retryPayload) return;
+                setSendError(null);
+                await doSend(retryPayload.prompt, retryPayload.session);
+              }}>Retry</button>
+              <button className="gpt-error-dismiss" onClick={() => setSendError(null)}>✕</button>
+            </div>
+          </div>
+        )}
+
         {/* Messages */}
         <div className="gpt-chat-messages">
           {messages.length === 0 ? (
@@ -442,6 +687,8 @@ const GptView: React.FC<GptViewProps> = ({
               const showCursor  = isLastAi && isGenerating;
 
               if (msg.role === 'user') {
+                const editTotal = msg.editVersions?.length ?? 1;
+                const editCurrent = msg.editVersionIdx ?? (editTotal - 1);
                 return (
                   <div key={msg.id} className="gpt-message user">
                     <div className="gpt-user-bubble">
@@ -469,9 +716,19 @@ const GptView: React.FC<GptViewProps> = ({
                         </>
                       )}
                     </div>
+                    <BranchNav
+                      current={editCurrent}
+                      total={editTotal}
+                      onPrev={() => handleEditBranchSwitch(msg.id, -1)}
+                      onNext={() => handleEditBranchSwitch(msg.id, 1)}
+                    />
                   </div>
                 );
               }
+
+              const aiBranches = msg.branches;
+              const aiBranchIndex = msg.branchIndex ?? (aiBranches ? aiBranches.length - 1 : 0);
+              const aiBranchTotal = aiBranches ? aiBranches.length : 1;
 
               return (
                 <div key={msg.id} className="gpt-message ai">
@@ -481,29 +738,48 @@ const GptView: React.FC<GptViewProps> = ({
                       <span className="gpt-thinking">thinking<span className="gpt-dots" /></span>
                     ) : (
                       <div className="gpt-message-content" style={{ fontSize }}>
-                        <ReactMarkdown
-                          components={{
-                            code({ inline, className, children, ...props }: any) {
-                              const lang = /language-(\w+)/.exec(className || '')?.[1];
-                              const code = String(children).replace(/\n$/, '');
-                              if (!inline && lang) return <CodeBlock code={code} language={lang} onSendToEditor={handleSendToEditor} />;
-                              return <code style={{ background: 'var(--vscode-input)', padding: '1px 5px', borderRadius: 3, fontFamily: "'Cascadia Code', monospace", fontSize: '0.9em' }} {...props}>{children}</code>;
-                            },
-                          }}
-                        >
-                          {liveContent}
-                        </ReactMarkdown>
-                        {showCursor && <span className="gpt-stream-cursor">█</span>}
+                        {/* #5 — During streaming: plain text (O(1) render, no parsing).
+                            After streaming: full ReactMarkdown with syntax highlighting. */}
+                        {showCursor ? (
+                          <>
+                            <span style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{liveContent}</span>
+                            <span className="gpt-stream-cursor">█</span>
+                          </>
+                        ) : (
+                          <ReactMarkdown
+                            components={{
+                              code({ inline, className, children, ...props }: any) {
+                                const lang = /language-(\w+)/.exec(className || '')?.[1];
+                                const code = String(children).replace(/\n$/, '');
+                                if (!inline && lang) return <CodeBlock code={code} language={lang} onSendToEditor={handleSendToEditor} />;
+                                return <code style={{ background: 'var(--vscode-input)', padding: '1px 5px', borderRadius: 3, fontFamily: "'Cascadia Code', monospace", fontSize: '0.9em' }} {...props}>{children}</code>;
+                              },
+                            }}
+                          >
+                            {liveContent}
+                          </ReactMarkdown>
+                        )}
                       </div>
                     )}
                     {!isGenerating && msg.content && (
                       <AiActions content={msg.content} onSend={handleSendToEditor} />
                     )}
-                    {isLastAi && !isGenerating && msg.content && (
-                      <button className="gpt-regen-btn" onClick={handleRegenerate} title="Regenerate">
-                        <RotateCcw size={12} /> Regenerate
-                      </button>
+                    {msg.ragSources && msg.ragSources.length > 0 && (
+                      <RagSourcesPanel sources={msg.ragSources} />
                     )}
+                    <div className="gpt-ai-footer">
+                      <BranchNav
+                        current={aiBranchIndex}
+                        total={aiBranchTotal}
+                        onPrev={() => handleAiBranchSwitch(msg.id, -1)}
+                        onNext={() => handleAiBranchSwitch(msg.id, 1)}
+                      />
+                      {isLastAi && !isGenerating && msg.content && (
+                        <button className="gpt-regen-btn" onClick={handleRegenerate} title="Regenerate">
+                          <RotateCcw size={12} /> Regenerate
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               );
@@ -514,13 +790,53 @@ const GptView: React.FC<GptViewProps> = ({
 
         {/* Input */}
         <div className="gpt-input-container">
-          <form onSubmit={handleSubmit} className="gpt-input-wrapper">
+          {/* #6 — Attachment chips */}
+          {attachedFiles.length > 0 && (
+            <div className="gpt-attachments">
+              {attachedFiles.map((f, i) => (
+                <div key={i} className="gpt-attachment-chip">
+                  <span>{f.name}</span>
+                  <button onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== i))}>✕</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <form onSubmit={handleSubmit} className="gpt-input-wrapper"
+            onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }}
+            onDragLeave={e => e.currentTarget.classList.remove('drag-over')}
+            onDrop={async e => {
+              e.preventDefault();
+              e.currentTarget.classList.remove('drag-over');
+              const files = Array.from(e.dataTransfer.files);
+              const read = await Promise.all(files.map(async f => {
+                if (f.type.startsWith('image/')) return { name: f.name, content: `[Image: ${f.name}]` };
+                try { return { name: f.name, content: await f.text() }; } catch { return null; }
+              }));
+              setAttachedFiles(prev => [...prev, ...read.filter(Boolean) as { name: string; content: string }[]]);
+            }}
+          >
             <textarea
               ref={textareaRef}
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(); } }}
-              placeholder={`Message ${currentModel || 'Local Cortex'}… (Shift+Enter for newline)`}
+              onPaste={async e => {
+                // #6 — paste image from clipboard
+                const items = Array.from(e.clipboardData.items);
+                const imgItem = items.find(it => it.type.startsWith('image/'));
+                if (imgItem) {
+                  e.preventDefault();
+                  const file = imgItem.getAsFile();
+                  if (file) setAttachedFiles(prev => [...prev, { name: file.name || 'pasted-image.png', content: `[Pasted image: ${file.name || 'image'}]` }]);
+                }
+                // text files pasted via file manager
+                const fileItem = items.find(it => it.kind === 'file' && it.type === 'text/plain');
+                if (fileItem && !imgItem) {
+                  const file = fileItem.getAsFile();
+                  if (file) { const text = await file.text(); setAttachedFiles(prev => [...prev, { name: file.name, content: text }]); e.preventDefault(); }
+                }
+              }}
+              placeholder={`Message ${currentModel || 'Local Cortex'}… (Shift+Enter for newline, drag files here)`}
               className="gpt-input"
               rows={1}
               disabled={isGenerating}
@@ -531,13 +847,13 @@ const GptView: React.FC<GptViewProps> = ({
                 <StopCircle size={16} />
               </button>
             ) : (
-              <button type="submit" className="gpt-send-btn" disabled={!input.trim()}>
+              <button type="submit" className="gpt-send-btn" disabled={!input.trim() && attachedFiles.length === 0}>
                 <Send size={14} />
               </button>
             )}
           </form>
           <div className="gpt-input-footer">
-            <span>Enter to send · Shift+Enter for newline</span>
+            <span>Enter to send · Shift+Enter for newline · Drag & drop files</span>
             {input && <span className="gpt-token-hint">~{inputTokens} tokens</span>}
           </div>
         </div>

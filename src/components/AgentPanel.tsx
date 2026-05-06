@@ -107,6 +107,9 @@ interface AgentPanelProps {
   onModelChange?: (model: string) => void;
   fontSize?: number;
   onWorkspaceChanged?: () => void;
+  systemPrompt?: string;
+  numCtx?: number;
+  temperature?: number;
 }
 
 type ExecutionEnvironment = 'local' | 'remote';
@@ -411,6 +414,9 @@ const AgentPanel: React.FC<AgentPanelProps> = ({
   onModelChange,
   fontSize = 13,
   onWorkspaceChanged,
+  systemPrompt,
+  numCtx,
+  temperature,
 }) => {
   const [sessions, setSessions] = useState<PersistedSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -800,6 +806,9 @@ const AgentPanel: React.FC<AgentPanelProps> = ({
           workspace,
           model: currentModel,
           contextMessages,
+          systemPrompt,
+          numCtx,
+          temperature,
         });
       } catch (error) {
         setRunning(false);

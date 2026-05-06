@@ -802,6 +802,9 @@ const EditorView: React.FC<EditorViewProps> = ({ settings, setSettings, pendingE
                   onModelChange={setCurrentModel}
                   onWorkspaceChanged={() => refreshTree()}
                   fontSize={terminalFontSize}
+                  systemPrompt={settings.systemPrompt}
+                  numCtx={settings.numCtx}
+                  temperature={settings.temperature}
                 />
               </div>
             ) : (

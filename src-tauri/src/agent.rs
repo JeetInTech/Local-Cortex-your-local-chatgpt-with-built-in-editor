@@ -280,13 +280,15 @@ pub fn build_agent_messages(
     scratchpad: &[(String, String)],
     rag_context: &[(crate::rag::Chunk, f32)],
     token_budget: usize,
+    system_prompt: Option<String>,
 ) -> Vec<Value> {
-    let mut system = format!(
+    let mut system = system_prompt.unwrap_or_else(|| {
         "You are Local Cortex, an expert AI coding agent running fully offline.\n\
-         Your job is to complete the user's task step by step.\n\
-         {}\n",
-        TOOL_DESCRIPTIONS
-    );
+         Your job is to complete the user's task step by step.\n".to_string()
+    });
+    system.push_str("\n\n");
+    system.push_str(TOOL_DESCRIPTIONS);
+    system.push_str("\n");
 
     if !rag_context.is_empty() {
         system.push_str("\n## Relevant codebase context:\n");
@@ -485,6 +487,9 @@ pub async fn run_agent(
     approvals: ApprovalMap,
     cancel_token: Arc<AtomicBool>,
     cancellations: CancellationMap,
+    system_prompt: Option<String>,
+    num_ctx: Option<u32>,
+    temperature: Option<f32>,
 ) {
     let client = reqwest::Client::new();
     let event_name = format!("agent-event-{}", task_id);
@@ -550,11 +555,15 @@ pub async fn run_agent(
             .await
             .unwrap_or_default();
 
-        let messages = build_agent_messages(&task, &scratchpad, &rag_results, 6000);
+        let messages = build_agent_messages(&task, &scratchpad, &rag_results, 6000, system_prompt.clone());
         let req_body = json!({
             "model": model,
             "messages": messages,
             "stream": false,
+            "options": {
+                "temperature": temperature.unwrap_or(0.2),
+                "num_ctx": num_ctx.unwrap_or(32768)
+            },
             "keep_alive": -1,
         });
 

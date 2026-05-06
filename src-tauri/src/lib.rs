@@ -312,6 +312,7 @@ async fn generate_response(
     messages: Vec<ChatMessage>,
     system_prompt: Option<String>,
     num_ctx: Option<u32>,
+    temperature: Option<f32>,
 ) -> Result<(), String> {
     // Prepend system message if one is provided
     let mut final_messages: Vec<ChatMessage> = Vec::new();
@@ -333,7 +334,7 @@ async fn generate_response(
         stream: true,
         options: OllamaOptions {
             num_ctx: num_ctx.unwrap_or(8192),
-            temperature: 0.7,
+            temperature: temperature.unwrap_or(0.2),
             top_p: 0.9,
         },
         keep_alive: Some(-1),
@@ -659,6 +660,9 @@ async fn start_agent(
     workspace: String,
     model: String,
     context_messages: Vec<ChatMessage>,
+    system_prompt: Option<String>,
+    num_ctx: Option<u32>,
+    temperature: Option<f32>,
 ) -> Result<(), String> {
     let store     = state.store.clone();
     let approvals = state.approvals.clone();
@@ -677,6 +681,9 @@ async fn start_agent(
             approvals,
             cancel_token,
             cancellations,
+            system_prompt,
+            num_ctx,
+            temperature,
         ).await;
     });
 
