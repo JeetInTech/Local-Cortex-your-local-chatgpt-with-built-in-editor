@@ -32,3 +32,9 @@ dist-ssr
 
 /local cortex v1.0
 /local cortex v1.0.zip
+
+# Tauri Updater Keys (Do not commit private keys!)
+~
+~/.tauri/
+*.key
+*.key.pub

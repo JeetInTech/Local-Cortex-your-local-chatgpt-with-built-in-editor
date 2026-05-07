@@ -5,6 +5,7 @@ import GptView from "./components/GptView";
 import EditorView from "./components/EditorView";
 import SettingsModal, { AppSettings, DEFAULT_SYSTEM_PROMPT } from "./components/SettingsModal";
 import SetupWizard from "./components/SetupWizard";
+import UpdateNotification from "./components/UpdateNotification";
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
@@ -69,6 +70,9 @@ function App() {
 
   return (
     <>
+      {/* Auto-update notification — checks GitHub on every launch */}
+      <UpdateNotification />
+
       {!setupComplete && (
         <SetupWizard onComplete={() => {
           localStorage.setItem('localcortex-setup-done', 'true');

@@ -6,6 +6,7 @@ use tauri::{Emitter, Manager, Window, State};
 use futures_util::StreamExt;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tauri_plugin_updater::UpdaterExt;
 
 // ─────────────────────────────────────────────
 // GLOBAL APP STATE
@@ -928,6 +929,76 @@ fn check_ollama() -> bool {
 }
 
 // ─────────────────────────────────────────────
+// AUTO-UPDATE COMMANDS
+// ─────────────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UpdateInfo {
+    pub available:       bool,
+    pub version:         Option<String>,
+    pub current_version: Option<String>,
+    pub body:            Option<String>,
+    pub date:            Option<String>,
+}
+
+/// Check if a new version is available on GitHub Releases.
+/// Returns version number + full release notes (changelog).
+#[tauri::command]
+async fn check_for_updates(app: tauri::AppHandle) -> Result<UpdateInfo, String> {
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    match updater.check().await.map_err(|e| e.to_string())? {
+        Some(update) => Ok(UpdateInfo {
+            available:       true,
+            version:         Some(update.version.clone()),
+            current_version: Some(update.current_version.clone()),
+            body:            update.body.clone(),
+            date:            update.date.map(|d| d.to_string()),
+        }),
+        None => Ok(UpdateInfo {
+            available:       false,
+            version:         None,
+            current_version: None,
+            body:            None,
+            date:            None,
+        }),
+    }
+}
+
+/// Download, verify, install the update and restart the app.
+/// Emits `update-progress` events: { status: "downloading" | "installing" | "done", downloaded?, total? }
+#[tauri::command]
+async fn install_update(app: tauri::AppHandle, window: Window) -> Result<(), String> {
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    let update  = updater.check().await.map_err(|e| e.to_string())?;
+
+    if let Some(update) = update {
+        let window_dl   = window.clone();
+        let window_done = window.clone();
+
+        update
+            .download_and_install(
+                move |downloaded, total| {
+                    let payload = serde_json::json!({
+                        "status":     "downloading",
+                        "downloaded": downloaded,
+                        "total":      total
+                    });
+                    let _ = window_dl.emit("update-progress", payload);
+                },
+                move || {
+                    let _ = window_done.emit("update-progress",
+                        serde_json::json!({ "status": "installing" }));
+                },
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+
+        app.restart();
+    }
+    Ok(())
+}
+
+// ─────────────────────────────────────────────
 // APP ENTRY
 // ─────────────────────────────────────────────
 
@@ -938,6 +1009,7 @@ pub fn run() {
     let cancellations = agent::new_cancellation_map();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -979,6 +1051,9 @@ pub fn run() {
             search_in_files,
             replace_in_file,
             check_ollama,
+            // ── Auto-Update ──
+            check_for_updates,
+            install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
