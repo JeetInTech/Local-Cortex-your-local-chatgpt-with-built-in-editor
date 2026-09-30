@@ -64,8 +64,6 @@ jobs:
             | `Local_Cortex_x64_en-US.msi` | Windows Installer (recommended) |
             | `Local_Cortex_x64-setup.exe` | NSIS Executable Installer |
 
-            > Code signing for Local Cortex is provided by the [SignPath Foundation](https://signpath.org).
-
             ### First launch
             The built-in Setup Wizard will automatically pull the required AI models from Ollama.
           releaseDraft: false

@@ -267,5 +267,28 @@ This project does not currently auto-install Ollama or auto-pull the required mo
 
 ## Files Added for Installation Support
 
-- [README.md](E:\Zen\projects\2026 - PROJECTS\Offline gpt\README.md)
-- [check_local_cortex_requirements.bat](E:\Zen\projects\2026 - PROJECTS\Offline gpt\check_local_cortex_requirements.bat)
+- [README.md](README.md)
+- [check_local_cortex_requirements.bat](check_local_cortex_requirements.bat)
+
+## Code signing policy
+
+> **Status:** applied to the SignPath Foundation. Until the application is approved, releases are **not** code-signed; this line is removed when signing starts.
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+Team roles:
+
+- Committers and reviewers: [Sangramjeet Ghosh (JeetInTech)](https://github.com/JeetInTech)
+- Approvers: [Sangramjeet Ghosh (JeetInTech)](https://github.com/JeetInTech)
+
+Every release is built from this repository by GitHub Actions ([build-release.yml](.github/workflows/build-release.yml)) when a version tag is pushed. Nothing built on a personal machine is signed, and each signing request is approved manually.
+
+See the [privacy policy](#privacy) below.
+
+## Privacy
+
+Local Cortex runs entirely on your computer. Your chats, files and code are processed by your local Ollama install (`127.0.0.1:11434`) and never leave your machine.
+
+The one automatic network request is an update check: when the app starts, it downloads [`latest.json`](https://github.com/JeetInTech/Local-Cortex-your-local-chatgpt-with-built-in-editor/releases/latest/download/latest.json) from this repository's GitHub releases to see whether a newer version exists. No personal data or content is sent with it; GitHub sees the request the way it sees any download. Updates are installed only when you choose to.
+
+Local Cortex has no analytics, telemetry or accounts. It can be removed at any time with Windows' *Add or remove programs*.
