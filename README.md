@@ -54,17 +54,22 @@ Ollama references:
 
 ## How This Project Works
 
-From reading the codebase, these are the important runtime assumptions:
+- All AI calls go from the Rust backend to Ollama at `http://127.0.0.1:11434` (`/api/chat`, `/api/tags`, `/api/pull`, `/api/embeddings`).
+- To use Ollama on another machine (e.g. a PC with a bigger GPU), set the `OLLAMA_HOST` environment variable before starting the app, e.g. `192.168.1.20:11434`. It is read the same way the `ollama` CLI reads it.
+- If Ollama is missing, the app opens but AI features fail. If no model is installed, pick or pull one first.
 
-- Chat requests are sent to Ollama at `http://127.0.0.1:11434/api/chat`
-- Installed Ollama models are read from `http://127.0.0.1:11434/api/tags`
-- RAG embeddings are requested from `http://127.0.0.1:11434/api/embeddings`
-- The default chat model in the UI is `llama3.2:latest`
+### The coding agent
 
-That means:
+The agent (Editor view, right panel) works only inside the folder you open, and cannot touch paths outside it.
 
-- if Ollama is missing, the app can open but AI features will fail
-- if `llama3.2` is missing, the default chat flow will not work until the user picks another installed model
+- It uses Ollama's native tool calling, and falls back to a JSON text protocol for models without tool support.
+- Tools: `read_file` (paged, line-numbered), `write_file`, `edit_file` (exact snippet replace), `delete_file`, `list_directory`, `grep`, `run_command` (PowerShell, 120 s timeout).
+- Approval modes: **Default** asks before commands and deletes, **Manual** also asks before file edits, **Auto** approves everything.
+- If the project has an `AGENTS.md` or `CLAUDE.md`, it is added to the agent's instructions.
+
+The model decides how good the agent is. `llama3.2` (3B, fits a 4 GB GPU) handles small single-file fixes. Use `qwen2.5-coder:7b` or larger for real multi-file work.
+
+Backend tests: `cd src-tauri && cargo test --lib`. To run the agent end to end against your local Ollama: `cargo test --lib live_agent -- --ignored --nocapture` (set `LC_TEST_MODEL` to pick the model).
 
 ## End-User Installation Guide
 
@@ -134,7 +139,7 @@ Use one of these distribution options:
 
 This repository now includes:
 
-- [check_local_cortex_requirements.bat](E:\Zen\projects\2026 - PROJECTS\Offline gpt\check_local_cortex_requirements.bat)
+- [check_local_cortex_requirements.bat](check_local_cortex_requirements.bat)
 
 Run it before launching the app. It will:
 
@@ -183,10 +188,10 @@ Install:
 - Microsoft C++ Build Tools
 - WebView2 runtime
 
-This repository already includes installers that may help on Windows:
+Installers:
 
-- [rustup-init.exe](E:\Zen\projects\2026 - PROJECTS\Offline gpt\rustup-init.exe)
-- [vs_BuildTools.exe](E:\Zen\projects\2026 - PROJECTS\Offline gpt\vs_BuildTools.exe)
+- [rustup](https://rustup.rs/)
+- [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
 
 ### 2. Install JavaScript dependencies
 
@@ -241,7 +246,7 @@ src-tauri\target\release\bundle\
 When you hand this app to another person, give them these three things:
 
 1. the Local Cortex installer or `.exe`
-2. [check_local_cortex_requirements.bat](E:\Zen\projects\2026 - PROJECTS\Offline gpt\check_local_cortex_requirements.bat)
+2. [check_local_cortex_requirements.bat](check_local_cortex_requirements.bat)
 3. these exact setup commands:
 
 ```powershell
@@ -259,11 +264,7 @@ ollama pull llama3.2
 
 ## Important Limitation
 
-This project does not currently auto-install Ollama or auto-pull the required models by itself. The installer/check script can guide the user, but the user still needs to:
-
-1. install Ollama
-2. run the model pull commands
-3. re-run the checker
+Local Cortex does not install Ollama itself. Once Ollama is installed and running, the first-run setup wizard pulls the models through it.
 
 ## Files Added for Installation Support
 
@@ -287,8 +288,8 @@ See the [privacy policy](#privacy) below.
 
 ## Privacy
 
-Local Cortex runs entirely on your computer. Your chats, files and code are processed by your local Ollama install (`127.0.0.1:11434`) and never leave your machine.
+Local Cortex runs entirely on your computer. Your chats, files and code are processed by your local Ollama install (`127.0.0.1:11434`) and never leave your machine. If you set `OLLAMA_HOST` to another machine, they are sent to that Ollama server instead.
 
-The one automatic network request is an update check: when the app starts, it downloads [`latest.json`](https://github.com/JeetInTech/Local-Cortex-your-local-chatgpt-with-built-in-editor/releases/latest/download/latest.json) from this repository's GitHub releases to see whether a newer version exists. No personal data or content is sent with it; GitHub sees the request the way it sees any download. Updates are installed only when you choose to.
+The one automatic network request is an update check: when the app starts, it checks for updates via `latest.json` from this repository's [GitHub releases](https://github.com/JeetInTech/Local-Cortex-your-local-chatgpt-with-built-in-editor/releases/latest) to see whether a newer version exists. No personal data or content is sent with it; GitHub sees the request the way it sees any download. Updates are installed only when you choose to.
 
 Local Cortex has no analytics, telemetry or accounts. It can be removed at any time with Windows' *Add or remove programs*.
